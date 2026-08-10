@@ -1,6 +1,6 @@
 import xarray as xr
-from ptuio.decoder import T3OverflowCorrector
-from ptuio.reconstructor import ImageReconstructor, ScanConfig
+from tttrkit.ptuio.decoder import T3OverflowCorrector
+from tttrkit.ptuio.reconstructor import ImageReconstructor, ScanConfig
 
 from napari_flopa.core.logger import ProgressLogger
 
