@@ -11,9 +11,11 @@ class FlopaState(QObject):
 
     Signals:
         dataset_changed — new xr.Dataset loaded (after reconstruction)
+        calib_factor_changed — phasor calibration factor set by any panel
     """
 
     dataset_changed = Signal()
+    calib_factor_changed = Signal(object)  # complex
 
     def __init__(self):
         super().__init__()
@@ -42,6 +44,7 @@ class FlopaState(QObject):
 
     def set_calib_factor(self, factor: complex):
         self.calib_factor = complex(factor)
+        self.calib_factor_changed.emit(self.calib_factor)
 
     # ------------------------------------------------------------------ #
     # Accessors                                                            #

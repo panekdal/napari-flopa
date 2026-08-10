@@ -4,6 +4,10 @@ from tttrkit.ptuio.reconstructor import ImageReconstructor, ScanConfig
 
 from napari_flopa.core.logger import ProgressLogger
 
+#: TTTR records read per iteration — memory/throughput trade-off only, it does
+#: not affect the result.
+DEFAULT_CHUNK_SIZE = 1_000_000
+
 
 def reconstruct_ptu_to_dataset(
     ptu_data: dict,
@@ -12,6 +16,7 @@ def reconstruct_ptu_to_dataset(
     tcspc_channels_override: int = None,
     logger: ProgressLogger = None,
     progress_callback=None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> xr.Dataset:
     """
     Full pipeline: reconstruct from already-loaded PTU data → xarray Dataset.
@@ -25,6 +30,8 @@ def reconstruct_ptu_to_dataset(
         logger: Optional ProgressLogger.
         progress_callback: Optional ``callable(done_chunks, total_chunks)`` invoked
             after each chunk (total_chunks is 0 if the record count is unknown).
+        chunk_size: TTTR records read per iteration. Affects memory use and
+            progress granularity only, not the reconstructed data.
 
     Returns:
         xr.Dataset with dimensions (frame, sequence, line, pixel, channel).
@@ -56,7 +63,7 @@ def reconstruct_ptu_to_dataset(
 
     corrector = T3OverflowCorrector(wraparound=constants["wrap"])
 
-    chunk_size = 1_000_000
+    chunk_size = int(chunk_size or DEFAULT_CHUNK_SIZE)
     total_records = ptu_data.get("header", {}).get(
         "TTResult_NumberOfRecords", 0
     )

@@ -11,7 +11,8 @@ Color / plot rules (matching old FLOPA behaviour):
 Calibration:
   • Factor stored as complex number; applied as phasor_complex * factor
   • "Calculate" button → CalibrationDialog: enter τ_ref (ns) + measured G, S → computes factor
-  • "Reset"            → 1+0j
+  • "Revert"           → the factor that came with the loaded config (1+0j if none)
+  • "1+0j"             → no calibration
 
 Stale indicator (●):  turns red on ANY change to view selection OR plot settings after last plot.
 
@@ -89,6 +90,9 @@ class PhasorPanel(QWidget):
         self._plotted_settings: dict | None = None
         self._final_plot_data: dict | None = None  # for CSV export
         self._calib_factor: complex = 1.0 + 0j
+        # Factor handed over by the last reconstruction (from the config file),
+        # i.e. what "Revert" goes back to; 1+0j when the config carried none.
+        self._loaded_calib_factor: complex = 1.0 + 0j
 
         # ROI selection state
         self._roi_active = False
@@ -107,6 +111,7 @@ class PhasorPanel(QWidget):
 
         self._build_ui()
         self.state.dataset_changed.connect(self._on_dataset_changed)
+        self.state.calib_factor_changed.connect(self._on_state_calib_changed)
         self.viewer.layers.events.inserted.connect(
             lambda _: self._refresh_mask_layers()
         )
@@ -328,10 +333,17 @@ class PhasorPanel(QWidget):
         custom_btn.clicked.connect(self._on_custom_factor_dialog)
         cal_lay.addWidget(custom_btn)
 
-        reset_btn = QPushButton("Reset")
-        reset_btn.setToolTip("Reset calibration factor to 1+0j")
-        reset_btn.clicked.connect(self._reset_calib)
-        cal_lay.addWidget(reset_btn)
+        self._revert_btn = QPushButton("Revert")
+        self._revert_btn.clicked.connect(self._revert_calib)
+        cal_lay.addWidget(self._revert_btn)
+        self._update_revert_tooltip()
+
+        unity_btn = QPushButton("1+0j")
+        unity_btn.setToolTip(
+            "Set the calibration factor to 1+0j (leaves the phasor unchanged)"
+        )
+        unity_btn.clicked.connect(self._reset_calib)
+        cal_lay.addWidget(unity_btn)
 
         cal_lay.addStretch()
         self._cal_group = cal_box
@@ -555,11 +567,41 @@ class PhasorPanel(QWidget):
         self.state.set_calib_factor(self._calib_factor)
         self._mark_stale()
 
+    @Slot(object)
+    def _on_state_calib_changed(self, factor):
+        """Adopt a factor set elsewhere (e.g. a config loaded in the PTU tab).
+
+        It also becomes the new "Revert" target. The echo of this panel's own
+        setters is filtered out (the value is already current).
+        """
+        factor = complex(factor)
+        if factor == self._calib_factor:
+            return
+        self._loaded_calib_factor = factor
+        self._update_revert_tooltip()
+        self._calib_factor = factor
+        self._calib_display.setText(self._fmt_complex(factor))
+        self._mark_stale()
+
+    def _revert_calib(self):
+        """Back to the factor loaded with the config (1+0j if none)."""
+        self._set_calib_factor(self._loaded_calib_factor)
+
     def _reset_calib(self):
-        self._calib_factor = 1.0 + 0j
+        """Drop calibration — factor 1+0j."""
+        self._set_calib_factor(1.0 + 0j)
+
+    def _set_calib_factor(self, factor: complex):
+        self._calib_factor = complex(factor)
         self._calib_display.setText(self._fmt_complex(self._calib_factor))
         self.state.set_calib_factor(self._calib_factor)
         self._mark_stale()
+
+    def _update_revert_tooltip(self):
+        self._revert_btn.setToolTip(
+            "Restore the calibration factor loaded with the config: "
+            f"{self._fmt_complex(self._loaded_calib_factor)}"
+        )
 
     @staticmethod
     def _fmt_complex(c: complex) -> str:

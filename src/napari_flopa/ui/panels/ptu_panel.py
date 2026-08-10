@@ -48,11 +48,17 @@ from napari_flopa.core.io.markers import (
 )
 from napari_flopa.core.logger import ProgressLogger
 from napari_flopa.core.processing.reconstruction import (
+    DEFAULT_CHUNK_SIZE,
     reconstruct_ptu_to_dataset,
 )
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
 from napari_flopa.ui.utils.threading import Worker
+
+
+def _fmt_factor(c: complex) -> str:
+    """Config-file form of a calibration factor, e.g. ``0.8644-0.0542j``."""
+    return str(complex(c)).strip("()")
 
 
 class PtuPanel(QWidget):
@@ -83,6 +89,11 @@ class PtuPanel(QWidget):
         self._param_source: dict[str, str] = {}
         self._param_dots: dict[str, object] = {}
         self._autofill = False
+
+        # Calibration factor carried by the loaded config (None = not in the
+        # file); pushed to the shared state when reconstruction finishes, so
+        # the Phasor tab picks it up.
+        self._cfg_calib_factor: complex | None = None
 
         self._build_ui()
 
@@ -201,7 +212,24 @@ class PtuPanel(QWidget):
         #     QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLength
         # )
         # self.out_combo.setMinimumContentsLength(8)
+        # output_row.addWidget(self.out_combo, 1)
         output_row.addWidget(self.out_combo, 1)
+
+        output_row.addWidget(QLabel("Chunk size:"))
+        self.chunk_size_spin = QSpinBox()
+        self.chunk_size_spin.setRange(100_000, 100_000_000)
+        self.chunk_size_spin.setSingleStep(100_000)
+        self.chunk_size_spin.setGroupSeparatorShown(True)
+        self.chunk_size_spin.setValue(DEFAULT_CHUNK_SIZE)
+        self.chunk_size_spin.setToolTip(
+            "TTTR records read per iteration "
+            f"(default {DEFAULT_CHUNK_SIZE:,}).\n"
+            "Smaller = less memory and finer progress steps; "
+            "larger = fewer iterations.\n"
+            "Does not change the reconstructed data."
+        )
+        output_row.addWidget(self.chunk_size_spin, 1)
+
         self.reconstruct_btn = QPushButton("Reconstruct")
         self.reconstruct_btn.clicked.connect(self._run_reconstruction)
         output_row.addWidget(self.reconstruct_btn)
@@ -729,6 +757,7 @@ class PtuPanel(QWidget):
             bidirectional=self.bidir_group.isChecked(),
             bidirectional_phase_shift=self.bidir_phase_spin.value(),
             f_rep_mhz=float(self.frep_spin.value()),
+            factor=_fmt_factor(self.state.calib_factor),
             ptu_filename=(
                 self.ptu_filepath.name if self.ptu_filepath else None
             ),
@@ -779,6 +808,10 @@ class PtuPanel(QWidget):
             if "f_rep_mhz" in cal:
                 self.frep_spin.setValue(float(cal["f_rep_mhz"]))
                 applied.append("frep")
+            # No widget for the factor here — it is handed to the Phasor tab
+            # (via the shared state) once reconstruction finishes.
+            if cal.get("factor"):
+                self._cfg_calib_factor = complex(cal["factor"])
 
             for name in applied:
                 self._set_param_source(name, source)
@@ -831,6 +864,7 @@ class PtuPanel(QWidget):
         scan_config = self._build_scan_config()
         outputs = self._get_outputs()
         tcspc_override = self.tcspc_bins_spin.value()
+        chunk_size = self.chunk_size_spin.value()
         ptu_data = self.ptu_data
         logger = ProgressLogger(mode="collect")
         # Emitting the signal is thread-safe; the slot runs on the main thread.
@@ -844,6 +878,7 @@ class PtuPanel(QWidget):
                 tcspc_channels_override=tcspc_override,
                 logger=logger,
                 progress_callback=emit_progress,
+                chunk_size=chunk_size,
             )
 
         worker = Worker(_run)
@@ -880,6 +915,9 @@ class PtuPanel(QWidget):
             ds.attrs["source_filename"] = self.ptu_filepath.name
 
         self._log(f"Done. Dataset: {dict(ds.sizes)}")
+        if self._cfg_calib_factor is not None:
+            self.state.set_calib_factor(self._cfg_calib_factor)
+            self._log(f"Calibration factor: {self._cfg_calib_factor}")
         self.state.set_dataset(ds, constants)
         self.reconstruction_finished.emit(ds)
 
