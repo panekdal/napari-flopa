@@ -19,7 +19,8 @@ Stale indicator (●):  turns red on ANY change to view selection OR plot settin
 Export:
   • Plot  → PNG / SVG / PDF
   • Table → CSV (pandas): dataset_name, label_id, g, s, photon_count_sum, area_pixels
-            (populated after every plot, not only per-object)
+            (populated after every plot, not only per-object; holds every valid
+             point even when the scatter was subsampled for display)
 """
 
 import contextlib
@@ -69,8 +70,11 @@ except ImportError:
 
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
+from napari_flopa.ui.widgets.status_label import StatusLabel
 
-_MAX_PX = 80_000  # scatter subsample cap
+# Scatter subsample cap — display only; the CSV export always holds every
+# valid pixel. 300k covers a full 500×500 frame without thinning.
+_MAX_PX = 300_000
 
 
 class PhasorPanel(QWidget):
@@ -88,7 +92,8 @@ class PhasorPanel(QWidget):
 
         self._current_view: dict = {}
         self._plotted_settings: dict | None = None
-        self._final_plot_data: dict | None = None  # for CSV export
+        self._final_plot_data: dict | None = None  # points actually drawn
+        self._export_data: dict | None = None  # every valid point, for CSV
         self._calib_factor: complex = 1.0 + 0j
         # Factor handed over by the last reconstruction (from the config file),
         # i.e. what "Revert" goes back to; 1+0j when the config carried none.
@@ -393,11 +398,9 @@ class PhasorPanel(QWidget):
         root.addWidget(splitter, stretch=1)
 
         # ── Status ─────────────────────────────────────────────────────
-        self._status = QLabel(
+        self._status = StatusLabel(
             "Load and reconstruct a PTU file with 'All' output to enable phasor."
         )
-        self._status.setWordWrap(True)
-        self._status.setStyleSheet(S.STATUS)
         root.addWidget(self._status)
 
         # Initial empty axes
@@ -499,14 +502,13 @@ class PhasorPanel(QWidget):
         self._plotted_settings = None
         self._stale.setVisible(False)
         self._final_plot_data = None
+        self._export_data = None
         self._plot_area.setVisible(False)  # hide until (re)plotted
         if not has_phasor:
-            self._status.setText(
-                "No phasor data. Reconstruct with 'All' output."
-            )
+            self._status.info("No phasor data. Reconstruct with 'All' output.")
             self._draw_empty()
         else:
-            self._status.setText("Phasor data ready. Click 'Plot'.")
+            self._status.info("Phasor data ready. Click 'Plot'.")
 
     @Slot(dict)
     def on_view_changed(self, settings: dict):
@@ -554,7 +556,7 @@ class PhasorPanel(QWidget):
             self.state.set_calib_factor(self._calib_factor)
             self._mark_stale()
         except Exception as e:
-            self._status.setText(f"Calibration error: {e}")
+            self._status.error(f"Calibration error: {e}")
 
     def _on_custom_factor_dialog(self):
         """Open dialog: user types real + imaginary parts directly."""
@@ -623,7 +625,7 @@ class PhasorPanel(QWidget):
             self._plot_area.setVisible(True)  # reveal on first/any plot
         except Exception as e:
             traceback.print_exc()
-            self._status.setText(f"Error: {e}")
+            self._status.error(f"Error: {e}")
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -693,8 +695,9 @@ class PhasorPanel(QWidget):
             if ldata.shape == shape_2d:
                 label_2d = ldata.astype(np.int32)
             else:
-                self._status.setText(
-                    f"Mask shape {ldata.shape} ≠ phasor shape {shape_2d}. Mask ignored."
+                self._status.warn(
+                    f"Mask shape {ldata.shape} ≠ phasor shape {shape_2d}. "
+                    "Mask ignored."
                 )
                 mask_active = False
 
@@ -838,15 +841,39 @@ class PhasorPanel(QWidget):
             else:
                 colors_out = "white"
 
-        # ── Store for CSV export ────────────────────────────────────────
+        # ── Store the drawn points (ROI selection indexes into these) ───
+        dataset_name = ds.attrs.get("source_filename", "N/A")
         self._final_plot_data = {
             "g_coords": np.array(g_out, dtype=np.float32).ravel(),
             "s_coords": np.array(s_out, dtype=np.float32).ravel(),
             "photon_counts": np.array(photons_out, dtype=np.float32).ravel(),
             "labels": np.array(labels_out).ravel(),
             "areas": np.array(areas_out).ravel(),
-            "dataset_name": ds.attrs.get("source_filename", "N/A"),
+            "dataset_name": dataset_name,
         }
+
+        # ── Store for CSV export — every valid point, including the ones
+        #    the plot dropped when subsampling ─────────────────────────────
+        if per_object:
+            self._export_data = self._final_plot_data
+        else:
+            n_full = len(g_full)
+            self._export_data = {
+                "g_coords": np.asarray(g_full, dtype=np.float32).ravel(),
+                "s_coords": np.asarray(s_full, dtype=np.float32).ravel(),
+                "photon_counts": (
+                    np.asarray(pc_full, dtype=np.float32).ravel()
+                    if pc_full is not None
+                    else np.ones(n_full, dtype=np.float32)
+                ),
+                "labels": (
+                    np.asarray(lbl_full).ravel()
+                    if lbl_full is not None
+                    else np.full(n_full, np.nan)
+                ),
+                "areas": np.full(n_full, np.nan),
+                "dataset_name": dataset_name,
+            }
 
         # ── Draw ────────────────────────────────────────────────────────
         if per_object:
@@ -895,15 +922,16 @@ class PhasorPanel(QWidget):
         self._roi_btn.setEnabled(True)
         n_plot = len(np.array(g_out).ravel())
         if per_object:
-            self._status.setText(f"Plotted {n_plot:,} objects.")
+            self._status.info(f"Plotted {n_plot:,} objects.")
         else:
             n_full = len(g_full)
             if n_plot < n_full:
-                self._status.setText(
-                    f"Plotted {n_plot:,} pixels (subsampled from {n_full:,} valid pixels)."
+                self._status.warn(
+                    f"Plot subsampled: {n_plot:,} of {n_full:,} valid pixels "
+                    "drawn. 'Save table' still exports all of them."
                 )
             else:
-                self._status.setText(f"Plotted {n_plot:,} pixels.")
+                self._status.info(f"Plotted {n_plot:,} pixels.")
 
     # ------------------------------------------------------------------ #
     # Drawing                                                              #
@@ -1272,13 +1300,14 @@ class PhasorPanel(QWidget):
             self._fig.savefig(
                 path, dpi=150, facecolor=MPL.FIG_BG, bbox_inches="tight"
             )
-            self._status.setText(f"Plot saved: {Path(path).name}")
+            self._status.info(f"Plot saved: {Path(path).name}")
         except Exception as e:
-            self._status.setText(f"Save error: {e}")
+            self._status.error(f"Save error: {e}")
 
     def _save_table(self):
-        if not self._final_plot_data:
-            self._status.setText("No data — click 'Plot' first.")
+        # Exports every valid point, not just the subsample that was drawn.
+        if not self._export_data:
+            self._status.info("No data — click 'Plot' first.")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Save Table", "phasor_table.csv", "CSV (*.csv)"
@@ -1288,7 +1317,7 @@ class PhasorPanel(QWidget):
         try:
             import pandas as pd
 
-            d = self._final_plot_data
+            d = self._export_data
             pd.DataFrame(
                 {
                     "dataset_name": d["dataset_name"],
@@ -1299,9 +1328,11 @@ class PhasorPanel(QWidget):
                     "area_pixels": d["areas"],
                 }
             ).to_csv(path, index=False)
-            self._status.setText(f"Table saved: {Path(path).name}")
+            self._status.info(
+                f"Table saved: {Path(path).name} ({len(d['g_coords']):,} rows)"
+            )
         except Exception as e:
-            self._status.setText(f"Save error: {e}")
+            self._status.error(f"Save error: {e}")
 
     # ── ROI Selection ──────────────────────────────────────────────────────
 

@@ -20,6 +20,11 @@ disabled when "Detectors" is aggregated.  All / None buttons are always active.
 
 Matplotlib legend is capped at _MAX_LEGEND (8) entries.
 The scrollable curve list uses rows of QHBoxLayouts for tight top-left alignment.
+
+Export (selector + Save, same pattern as the Phasor tab):
+  • Plot  → PNG / SVG / PDF
+  • Table → CSV: time_ns + one column per curve (every curve, hidden ones
+            included), with shift and normalisation applied as plotted
 """
 
 import csv
@@ -33,6 +38,7 @@ from matplotlib.figure import Figure
 from qtpy.QtCore import Qt, Signal, Slot
 from qtpy.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -59,6 +65,7 @@ from tttrkit.ptuio.utils import shift_decay
 
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
+from napari_flopa.ui.widgets.status_label import StatusLabel
 
 
 # 60-colour palette from matplotlib's three tab20 maps
@@ -150,22 +157,19 @@ class DecayPanel(QWidget):
 
         tb.addStretch()
 
-        tb.addWidget(QLabel("Log Y:"))
-        self._log_check = QCheckBox()
-        self._log_check.setChecked(True)
-        tb.addWidget(self._log_check)
-
-        tb.addWidget(QLabel("Norm:"))
-        self._norm_check = QCheckBox()
-        self._norm_check.setToolTip("Normalize each curve to its peak")
-        tb.addWidget(self._norm_check)
-
-        self._export_btn = QPushButton("Export…")
-        self._export_btn.setToolTip(
-            "Save plot as PNG/SVG/PDF or curves as CSV"
+        # Same pattern as the Phasor tab: pick what to save, then Save.
+        self._export_combo = QComboBox()
+        self._export_combo.addItem("Save plot…", "plot")
+        self._export_combo.addItem("Save table…", "table")
+        self._export_combo.setToolTip(
+            "Plot: PNG / SVG / PDF of the figure\n"
+            "Table: CSV with one column per curve (shift + normalisation "
+            "applied, as plotted)"
         )
-        self._export_btn.setEnabled(False)
-        tb.addWidget(self._export_btn)
+        tb.addWidget(self._export_combo)
+        self._save_btn = QPushButton("Save")
+        self._save_btn.setEnabled(False)
+        tb.addWidget(self._save_btn)
 
         root.addLayout(tb)
 
@@ -194,14 +198,36 @@ class DecayPanel(QWidget):
         shift_lay = QHBoxLayout(shift_box)
         shift_lay.setContentsMargins(6, 2, 6, 2)
         self._shift_spin = QSpinBox()
-        self._shift_spin.setRange(-500, 500)
+        self._shift_spin.setRange(-1000, 1000)
         self._shift_spin.setValue(0)
-        self._shift_spin.setToolTip("Circularly shift all curves by N bins.")
+        self._shift_spin.setToolTip("Shift all curves by N bins.")
         shift_lay.addWidget(self._shift_spin)
         sr.addWidget(shift_box)
 
         # sr.addStretch()
         root.addLayout(sr)
+
+        # ── Display options row (below Aggregate) ──────────────────────────────
+        sr2 = QHBoxLayout()
+        sr2.setSpacing(6)
+
+        scale_box = QGroupBox("Display options")
+        apply_style(scale_box, S.GROUP_PRIMARY)
+        scale_lay = QHBoxLayout(scale_box)
+        scale_lay.setSpacing(6)
+        scale_lay.setContentsMargins(6, 2, 6, 2)
+        self._log_check = QCheckBox("Log Y")
+        self._log_check.setChecked(True)
+        self._log_check.setToolTip(
+            "Logarithmic Y axis (floor 1 count, or 1e-4 when normalised)"
+        )
+        self._norm_check = QCheckBox("Norm")
+        self._norm_check.setToolTip("Normalize each curve to its peak")
+        scale_lay.addWidget(self._log_check)
+        scale_lay.addWidget(self._norm_check)
+        sr2.addWidget(scale_box)
+
+        root.addLayout(sr2)
         root.addStretch()
         # ── Matplotlib canvas ──────────────────────────────────────────
         # Small default size (keeps the initial dock narrow); the Expanding
@@ -265,18 +291,16 @@ class DecayPanel(QWidget):
         root.addWidget(self._legend_scroll)
 
         # ── Status ─────────────────────────────────────────────────────
-        self._status = QLabel(
+        self._status = StatusLabel(
             "Load and reconstruct a PTU file to enable decay plotting."
         )
-        self._status.setWordWrap(True)
-        self._status.setStyleSheet(S.STATUS)
         root.addWidget(self._status)
 
         # ── Wiring ─────────────────────────────────────────────────────
         self._plot_btn.clicked.connect(self._on_plot)
         self._from_view_btn.clicked.connect(self._on_from_view)
         self._default_btn.clicked.connect(self._on_default)
-        self._export_btn.clicked.connect(self._on_export)
+        self._save_btn.clicked.connect(self._on_export)
         self._log_check.toggled.connect(self._redraw)
         self._norm_check.toggled.connect(self._redraw)
         self._shift_spin.valueChanged.connect(self._redraw)
@@ -299,11 +323,9 @@ class DecayPanel(QWidget):
         self._plot_btn.setEnabled(has_tcspc)
         self._from_view_btn.setEnabled(has_tcspc)
         if not has_tcspc:
-            self._status.setText(
-                "No TCSPC data. Reconstruct with 'All (+ Phasor & TCSPC)' output."
-            )
+            self._status.info("No TCSPC data. Reconstruct with 'All' output.")
         else:
-            self._status.setText("TCSPC data ready. Click 'Plot'.")
+            self._status.info("TCSPC data ready. Click 'Plot'.")
         self._plotted_view = None
         self._stale.setVisible(False)
         self._curves = []
@@ -349,7 +371,7 @@ class DecayPanel(QWidget):
         self._stale.setStyleSheet(S.STALE_FRESH)
         self._stale.setToolTip("Plot is up to date.")
         self._stale.setVisible(True)
-        self._export_btn.setEnabled(True)
+        self._save_btn.setEnabled(True)
         self._rebuild_det_buttons()
         self._rebuild_legend()
         self._redraw()
@@ -409,7 +431,7 @@ class DecayPanel(QWidget):
         self._stale.setStyleSheet(S.STALE_FRESH)
         self._stale.setToolTip("Plot is up to date.")
         self._stale.setVisible(True)
-        self._export_btn.setEnabled(True)
+        self._save_btn.setEnabled(True)
         self._rebuild_det_buttons()
         self._rebuild_legend()
         self._redraw()
@@ -514,7 +536,7 @@ class DecayPanel(QWidget):
 
         except Exception as e:
             traceback.print_exc()
-            self._status.setText(f"Error extracting curves: {e}")
+            self._status.error(f"Error extracting curves: {e}")
             return []
 
     # ------------------------------------------------------------------ #
@@ -582,7 +604,9 @@ class DecayPanel(QWidget):
             color=MPL.TICK,
             fontsize=8,
         )
-        ax.tick_params(colors=MPL.TICK, labelsize=7)
+        # which="both": on a log axis the minor ticks/labels keep matplotlib's
+        # default black unless they are styled explicitly.
+        ax.tick_params(which="both", colors=MPL.TICK, labelsize=7)
         for sp in ax.spines.values():
             sp.set_edgecolor(MPL.SPINE)
 
@@ -616,7 +640,7 @@ class DecayPanel(QWidget):
         if n_vis == 1:
             counts = np.roll(visible[0]["counts"], shift)
             peak_str = f"  Peak: {int(counts.max()):,}"
-        self._status.setText(
+        self._status.info(
             f"{n_vis}/{n_tot} curve(s) visible, shift={shift} bins.{peak_str}"
         )
 
@@ -628,7 +652,9 @@ class DecayPanel(QWidget):
         ax.grid(True, color=MPL.GRID, linewidth=0.5, linestyle="--", alpha=0.6)
         ax.set_xlabel("Time (ns)", color=MPL.TICK, fontsize=8)
         ax.set_ylabel("Counts", color=MPL.TICK, fontsize=8)
-        ax.tick_params(colors=MPL.TICK, labelsize=7)
+        # which="both": on a log axis the minor ticks/labels keep matplotlib's
+        # default black unless they are styled explicitly.
+        ax.tick_params(which="both", colors=MPL.TICK, labelsize=7)
         for sp in ax.spines.values():
             sp.set_edgecolor(MPL.SPINE)
         ax.text(
@@ -789,27 +815,38 @@ class DecayPanel(QWidget):
     # ------------------------------------------------------------------ #
 
     def _on_export(self):
-        """Open save dialog; dispatch to _export_csv or save the figure (PNG/SVG/PDF)."""
+        """Dispatch on the export selector (plot | table)."""
         if not self._curves:
             return
+        if self._export_combo.currentData() == "plot":
+            self._save_plot()
+        else:
+            self._save_table()
+
+    def _save_plot(self):
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Decay",
-            "decay",
-            "PNG image (*.png);;CSV data (*.csv);;SVG image (*.svg);;PDF (*.pdf)",
+            "Save Decay Plot",
+            "decay.png",
+            "PNG (*.png);;SVG (*.svg);;PDF (*.pdf)",
         )
         if not path:
             return
-        if path.endswith(".csv"):
-            self._export_csv(path)
-        else:
-            try:
-                self._fig.savefig(
-                    path, dpi=300, facecolor=MPL.FIG_BG, bbox_inches="tight"
-                )
-                self._status.setText(f"Saved: {Path(path).name}")
-            except Exception as e:
-                self._status.setText(f"Save error: {e}")
+        try:
+            self._fig.savefig(
+                path, dpi=300, facecolor=MPL.FIG_BG, bbox_inches="tight"
+            )
+            self._status.info(f"Plot saved: {Path(path).name}")
+        except Exception as e:
+            self._status.error(f"Save error: {e}")
+
+    def _save_table(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Decay Table", "decay.csv", "CSV (*.csv)"
+        )
+        if not path:
+            return
+        self._export_csv(path)
 
     def _export_csv(self, path: str):
         """
@@ -847,10 +884,13 @@ class DecayPanel(QWidget):
                         [f"{ref_time[i]:.6f}"]
                         + [f"{col[i]:.4f}" for col in cols]
                     )
-            self._status.setText(f"Saved CSV: {Path(path).name}")
+            self._status.info(
+                f"Table saved: {Path(path).name} "
+                f"({len(self._curves)} curve(s), {max_len:,} bins)"
+            )
         except Exception as e:
             traceback.print_exc()
-            self._status.setText(f"CSV error: {e}")
+            self._status.error(f"CSV error: {e}")
 
 
 # ── Legend entry widget ───────────────────────────────────────────────────

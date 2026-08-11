@@ -1,5 +1,5 @@
 name: napari-flopa
-display_name: Flopa
+display_name: FLOPA
 visibility: public
 contributions:
   commands:

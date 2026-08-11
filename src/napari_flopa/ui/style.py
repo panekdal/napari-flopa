@@ -60,7 +60,7 @@ class C:  # "Color" — raw hex colour tokens
 
     # Accent — cyan/teal (contrast / view slider)
     ACCENT = "#38bec9"
-    ACCENT_DIM = "#2a97a0"
+    ACCENT_DIM = "#38bec9"
     ACCENT_BG = "#22343a"
     ACCENT_BG_HOV = "#2b4249"
 
@@ -115,7 +115,10 @@ class S:  # "Style" — Qt stylesheet strings
         "estimated": f"color: {C.PROV_ESTIMATED}; font-size: 11px;",
     }
 
+    # Status line levels — see ui/widgets/status_label.py (StatusLabel)
     STATUS = f"color: {C.TEXT_DIM}; font-size: 10px;"
+    STATUS_WARN = f"color: {C.WARNING}; font-size: 10px;"
+    STATUS_ERROR = f"color: {C.DANGER_TEXT}; font-size: 10px;"
     HINT = f"color: {C.TEXT_FAINT}; font-size: 9px; font-weight: normal;"
     MUTED = f"color: {C.TEXT_MUTED}; font-weight: normal;"
     WARNING = f"color: {C.WARNING}; font-size: 9px; font-weight: normal;"
