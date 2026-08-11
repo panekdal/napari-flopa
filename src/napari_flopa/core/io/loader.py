@@ -1,6 +1,6 @@
 import numpy as np
-from ptuio.reader import TTTRReader
-from ptuio.utils import estimate_tcspc_bins
+from tttrkit.ptuio.reader import TTTRReader
+from tttrkit.ptuio.utils import estimate_tcspc_bins
 
 from napari_flopa.core import provenance
 from napari_flopa.core.io.ptu_params import TAG_PARAMS

@@ -33,7 +33,7 @@ dependencies = [
     "scipy",
     "matplotlib<3.11",
     "superqt",
-    "tttrkit==0.1.0rc2",
+    "tttrkit==0.1.1",
 ]
 
 [project.optional-dependencies]

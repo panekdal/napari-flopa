@@ -16,7 +16,7 @@ requires_demo = pytest.mark.skipif(
 
 
 def _scan_config(params):
-    from ptuio.reconstructor import ScanConfig
+    from tttrkit.ptuio.reconstructor import ScanConfig
 
     scan = params["scan"]
     return ScanConfig(

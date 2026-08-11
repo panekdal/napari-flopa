@@ -5,8 +5,8 @@ from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
 from matplotlib.figure import Figure
-from ptuio.reconstructor import ScanConfig
-from ptuio.utils import estimate_bidirectional_shift
+from tttrkit.ptuio.reconstructor import ScanConfig
+from tttrkit.ptuio.utils import estimate_bidirectional_shift
 from qtpy.QtCore import Qt, QThreadPool, Signal, Slot
 from qtpy.QtWidgets import (
     QApplication,

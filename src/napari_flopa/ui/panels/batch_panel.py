@@ -1355,7 +1355,7 @@ class BatchPanel(QWidget):
 
     def _build_scan_config(self):
         """Build a ScanConfig from the UI fields."""
-        from ptuio.reconstructor import ScanConfig
+        from tttrkit.ptuio.reconstructor import ScanConfig
 
         def _int(edit: QLineEdit, name: str, default: int = 1) -> int:
             txt = edit.text().strip()
