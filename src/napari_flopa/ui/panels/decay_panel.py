@@ -437,16 +437,22 @@ class DecayPanel(QWidget):
         self._redraw()
 
     def _on_default(self):
-        """Reset to no aggregation; all curves visible."""
+        """Reset to no aggregation, all curves visible, and re-plot.
+
+        Clearing the aggregation flags changes which curves exist, so this
+        re-extracts and redraws immediately (like From View) rather than
+        leaving the old curves on screen behind a stale dot.
+        """
         for chk in (self._agg_frames, self._agg_seqs, self._agg_chans):
             chk.blockSignals(True)
             chk.setChecked(False)
             chk.blockSignals(False)
+        self._on_plot()  # no-op if there is no data to extract
         for c in self._curves:
             c["visible"] = True
         self._rebuild_det_buttons()
         self._rebuild_legend()
-        self._mark_stale()
+        self._redraw()
 
     # ------------------------------------------------------------------ #
     # Data extraction                                                      #

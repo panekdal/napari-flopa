@@ -4,6 +4,9 @@ Phasor analysis panel — modelled on IMCF-Biocev/FLOPA.
 Color / plot rules (matching old FLOPA behaviour):
   Per pixel, no mask   → sub-modes: Scatter (white) | Intensity Weighted (alpha) | Density
   Per pixel, mask      → forced "Labels" mode; colors from napari layer .get_color()
+  Per pixel, mask + "As filter"
+                       → mask treated as binary: only its pixels are plotted, as
+                         one population, so the sub-modes apply again
   Per object, no mask  → single centroid (white); no background scatter
   Per object, mask     → one centroid per label; colors from napari layer; no background scatter
   Cmap selector        → enabled only for Density (no mask)
@@ -278,6 +281,15 @@ class PhasorPanel(QWidget):
             QSizePolicy.Expanding, QSizePolicy.Fixed
         )
         mask_lay.addWidget(self._mask_combo, 1)
+
+        self._mask_filter_check = QCheckBox("As filter")
+        self._mask_filter_check.setToolTip(
+            "Treat the mask as binary: plot only the pixels inside it, but as "
+            "one population instead of colouring per label.\n"
+            "That makes the Per Pixel sub-modes (Intensity α, Density) usable "
+            "with a mask."
+        )
+        mask_lay.addWidget(self._mask_filter_check)
         root.addWidget(mask_box)
 
         # -- Smoothing (own row, above Calibration) --
@@ -419,6 +431,7 @@ class PhasorPanel(QWidget):
             self._pm_density,
             self._hexbin_check,
             self._mask_combo,
+            self._mask_filter_check,
             self._cmap_combo,
             self._lifetimes_check,
             self._smooth_group,
@@ -438,6 +451,7 @@ class PhasorPanel(QWidget):
         )
         self._pm_density.toggled.connect(self._update_control_states)
         self._hexbin_check.toggled.connect(self._update_control_states)
+        self._mask_filter_check.toggled.connect(self._update_control_states)
 
         self._update_control_states()
 
@@ -449,17 +463,28 @@ class PhasorPanel(QWidget):
         """Enable/disable controls based on current mode + mask selection."""
         mask_active = self._mask_combo.currentText() != "None"
         per_pixel = self._per_pixel_radio.isChecked()
-        density_no_mask = (
-            per_pixel and not mask_active and self._pm_density.isChecked()
-        )
+        # "As filter" turns a label mask into a binary one: same pixels, but
+        # one population — which is what the sub-modes need. Per Pixel only.
+        self._mask_filter_check.setEnabled(per_pixel and mask_active)
+        color_by_label = mask_active and not self._mask_as_filter()
 
-        # Pixel sub-modes: only relevant + enabled for per-pixel, no mask
+        # Pixel sub-modes: whenever points are not coloured per label
+        sub_modes_ok = per_pixel and not color_by_label
         for rb in self._pixel_submodes:
-            rb.setEnabled(per_pixel and not mask_active)
+            rb.setEnabled(sub_modes_ok)
 
-        # Cmap + hex bin: only for density without mask
-        self._cmap_combo.setEnabled(density_no_mask)
-        self._hexbin_check.setEnabled(density_no_mask)
+        # Cmap + hex bin: only for density
+        density = sub_modes_ok and self._pm_density.isChecked()
+        self._cmap_combo.setEnabled(density)
+        self._hexbin_check.setEnabled(density)
+
+    def _mask_as_filter(self) -> bool:
+        """Mask set to act as a plain binary filter — Per Pixel mode only."""
+        return (
+            self._per_pixel_radio.isChecked()
+            and self._mask_combo.currentText() != "None"
+            and self._mask_filter_check.isChecked()
+        )
 
     def _on_setting_changed(self, *_):
         self._update_control_states()
@@ -480,6 +505,7 @@ class PhasorPanel(QWidget):
             "per_object": self._per_object_radio.isChecked(),
             "pixel_mode": self._pixel_mode_group.checkedId(),
             "mask": self._mask_combo.currentText(),
+            "mask_filter": self._mask_filter_check.isChecked(),
             "cmap": self._cmap_combo.currentText(),
             "smooth": self._smooth_group.isChecked(),
             "smooth_k": self._smooth_spin.value(),
@@ -702,6 +728,13 @@ class PhasorPanel(QWidget):
                 mask_active = False
 
         per_object = self._per_object_radio.isChecked()
+        # Binary-filter mode (Per Pixel only): the mask still restricts which
+        # pixels are plotted — that happens below via `valid` — but they are
+        # drawn as one population instead of coloured per label.
+        # `mask_active` (not the combo) so a shape-mismatched mask, which was
+        # just discarded above, cannot leave filter mode switched on.
+        mask_as_filter = mask_active and self._mask_as_filter()
+        color_by_label = mask_active and not mask_as_filter
 
         # ── Build final g/s arrays ──────────────────────────────────────
         (
@@ -830,8 +863,9 @@ class PhasorPanel(QWidget):
                 lt_pix if lt_pix is not None else np.full(len(g_pix), np.nan)
             )
 
-            if mask_active and lbl_pix is not None:
-                # build RGBA per point from napari label colors
+            if color_by_label and lbl_pix is not None:
+                # build RGBA per point from napari label colors — one lookup
+                # per plotted point, so skip it entirely in filter mode
                 colors_out = np.array(
                     [
                         _get_napari_color(mask_layer, int(lbl))
@@ -885,7 +919,7 @@ class PhasorPanel(QWidget):
             colors_out,
             sync_hz=float(sync_hz),
             per_object=per_object,
-            mask_active=mask_active,
+            color_by_label=color_by_label,
             photon_counts=(
                 np.array(photons_out).ravel() if not per_object else None
             ),
@@ -910,7 +944,9 @@ class PhasorPanel(QWidget):
                 s_full,
                 lt_full,
                 pc_full,
-                lbl_full,
+                # Filter mode → no labels, so the table summarises the masked
+                # pixels as the single population the plot shows.
+                None if mask_as_filter else lbl_full,
                 mask_layer,
             )
         self._table.setVisible(True)
@@ -925,13 +961,14 @@ class PhasorPanel(QWidget):
             self._status.info(f"Plotted {n_plot:,} objects.")
         else:
             n_full = len(g_full)
+            scope = " inside the mask" if mask_as_filter else ""
             if n_plot < n_full:
                 self._status.warn(
-                    f"Plot subsampled: {n_plot:,} of {n_full:,} valid pixels "
-                    "drawn. 'Save table' still exports all of them."
+                    f"Plot subsampled: {n_plot:,} of {n_full:,} valid pixels"
+                    f"{scope} drawn. 'Save table' still exports all of them."
                 )
             else:
-                self._status.info(f"Plotted {n_plot:,} pixels.")
+                self._status.info(f"Plotted {n_plot:,} pixels{scope}.")
 
     # ------------------------------------------------------------------ #
     # Drawing                                                              #
@@ -945,12 +982,18 @@ class PhasorPanel(QWidget):
         *,
         sync_hz,
         per_object,
-        mask_active,
+        color_by_label,
         photon_counts,
         labels,
         mask_layer,
         lt_arr,
     ):
+        """Draw the phasor plot.
+
+        *color_by_label* means "a mask is active and should tint the points";
+        it is False when the mask acts as a plain binary filter, which routes
+        per-pixel drawing to the Scatter / Intensity / Density sub-modes.
+        """
         fig = self._fig
         fig.clear()
         ax = fig.add_subplot(111)
@@ -991,7 +1034,7 @@ class PhasorPanel(QWidget):
                 zorder=10,
             )
             # Legend (≤12 labels)
-            if mask_active and labels is not None and len(g) <= 12:
+            if color_by_label and labels is not None and len(g) <= 12:
                 import matplotlib.patches as mpatches
 
                 handles = []
@@ -1013,7 +1056,7 @@ class PhasorPanel(QWidget):
                     framealpha=0.8,
                 )
 
-        elif mask_active:
+        elif color_by_label:
             # Per pixel + mask → color by label
             ax.scatter(g, s, c=colors, s=2, alpha=0.4, linewidths=0, zorder=1)
             # Legend (≤12 unique labels)

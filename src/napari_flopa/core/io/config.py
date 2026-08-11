@@ -8,7 +8,9 @@ Schema::
       "scan": {
         "frames", "lines", "pixels", "sequences",
         "accumulations": [1, 3, ...], # one int per sequence
-        "max_detector", "tcspc_bins",
+        "max_detector",
+        "tcspc_bins",                 # optional — omitted by writers that
+                                      #   have no such field (e.g. Batch)
         "bidirectional", "bidirectional_phase_shift"
       },
       "calibration": {"f_rep_mhz", "factor": "1+0j"}
@@ -26,14 +28,18 @@ def build_scan_config_dict(
     sequences,
     accumulations,
     max_detector,
-    tcspc_bins,
     bidirectional,
     bidirectional_phase_shift,
     f_rep_mhz,
+    tcspc_bins=None,
     factor="1+0j",
     ptu_filename=None,
 ) -> dict:
-    """Assemble the serialisable scan-config dict from primitive values."""
+    """Assemble the serialisable scan-config dict from primitive values.
+
+    ``tcspc_bins`` is omitted from the result when None, for callers that have
+    no such field; readers treat every key as optional.
+    """
     cfg: dict = {
         "scan": {
             "frames": int(frames),
@@ -42,7 +48,6 @@ def build_scan_config_dict(
             "sequences": int(sequences),
             "accumulations": [int(a) for a in accumulations],
             "max_detector": int(max_detector),
-            "tcspc_bins": int(tcspc_bins),
             "bidirectional": bool(bidirectional),
             "bidirectional_phase_shift": float(
                 bidirectional_phase_shift if bidirectional else 0
@@ -53,6 +58,8 @@ def build_scan_config_dict(
             "factor": str(factor),
         },
     }
+    if tcspc_bins is not None:
+        cfg["scan"]["tcspc_bins"] = int(tcspc_bins)
     if ptu_filename:
         cfg["ptu_filename"] = str(ptu_filename)
     return cfg

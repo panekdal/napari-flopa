@@ -55,7 +55,15 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from napari_flopa.core.io.config import load_config, save_config
+from napari_flopa.core.io.config import (
+    build_scan_config_dict,
+    load_config,
+    save_config,
+)
+from napari_flopa.core.processing.reconstruction import (
+    DEFAULT_CHUNK_SIZE,
+    MIN_CHUNK_SIZE,
+)
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import S, apply_style
 
@@ -534,7 +542,11 @@ class _BatchWorker(QObject):
 
         ptu_data = read_ptu_file(str(ptu_path))
         ds = reconstruct_ptu_to_dataset(
-            ptu_data, p["scan_config"], outputs=outputs
+            ptu_data,
+            p["scan_config"],
+            outputs=outputs,
+            tcspc_channels_override=p.get("tcspc_bins"),
+            chunk_size=p.get("chunk_size") or DEFAULT_CHUNK_SIZE,
         )
 
         # Apply calibration factor
@@ -1072,9 +1084,9 @@ class BatchPanel(QWidget):
         cfg_box = QGroupBox("Scan Config && Calibration")
         apply_style(cfg_box, S.GROUP_PRIMARY)
         cfg_box.setStyleSheet(S.GROUP_PRIMARY)
-        cfg_hlay = QHBoxLayout(cfg_box)
-        cfg_hlay.setSpacing(8)
-        cfg_hlay.setContentsMargins(6, 4, 6, 6)
+        cfg_vlay = QVBoxLayout(cfg_box)
+        cfg_vlay.setSpacing(6)
+        cfg_vlay.setContentsMargins(6, 4, 6, 6)
 
         # ── left: fields ────────────────────────────────────────────
         fields_w = QWidget()
@@ -1130,6 +1142,14 @@ class BatchPanel(QWidget):
             cg.addWidget(QLabel(lbl), 1, col * 2)
             cg.addWidget(w, 1, col * 2 + 1)
 
+        # Instrument row — both values a PTU header can supply
+        self._c_tcspc = _le_int(4096, 70)
+        self._c_tcspc.setValidator(QIntValidator(1, 1_048_576))
+        self._c_tcspc.setToolTip(
+            "TCSPC bins (histogram channels). Overrides the value read from "
+            "each file's header."
+        )
+
         # Bidirectional row
         self._c_bidir = QCheckBox("Bidirectional")
         self._c_bidir.setStyleSheet("font-weight: normal;")
@@ -1144,18 +1164,9 @@ class BatchPanel(QWidget):
         self._c_bidir.toggled.connect(self._c_bidir_shift.setEnabled)
         bidir_lbl = QLabel("Phase shift:")
         bidir_lbl.setStyleSheet("font-weight: normal;")
-        cg.addWidget(self._c_bidir, 2, 0, 1, 2)
-        cg.addWidget(bidir_lbl, 2, 2)
-        cg.addWidget(self._c_bidir_shift, 2, 3)
-
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.HLine)
-        sep1.setStyleSheet(S.SEPARATOR)
-        cg.addWidget(sep1, 3, 0, 1, 6)
-
-        cal_lbl = QLabel("Calibration")
-        cal_lbl.setStyleSheet(S.MUTED)
-        cg.addWidget(cal_lbl, 4, 0, 1, 6)
+        cg.addWidget(self._c_bidir, 3, 0, 1, 2)
+        cg.addWidget(bidir_lbl, 3, 2)
+        cg.addWidget(self._c_bidir_shift, 3, 3)
 
         self._cal_frep = QLineEdit("40.0")
         self._cal_frep.setMaximumWidth(70)
@@ -1163,7 +1174,6 @@ class BatchPanel(QWidget):
         self._cal_frep.setToolTip("Laser/excitation repetition rate in MHz")
 
         self._cal_factor = QLineEdit("1+0j")
-        self._cal_factor.setMaximumWidth(110)
         self._cal_factor.setValidator(
             QRegularExpressionValidator(
                 QRegularExpression(
@@ -1176,42 +1186,72 @@ class BatchPanel(QWidget):
             "Example: 1.0+0.2j  or  0.95-0.05j"
         )
 
-        cg.addWidget(QLabel("f_rep (MHz):"), 5, 0)
-        cg.addWidget(self._cal_frep, 5, 1)
-        cg.addWidget(QLabel("Factor:"), 5, 2)
-        cg.addWidget(self._cal_factor, 5, 3)
+        self._c_chunk = _le_int(DEFAULT_CHUNK_SIZE, 90)
+        chunk_validator = QIntValidator(self)  # lower bound only, no ceiling
+        chunk_validator.setBottom(MIN_CHUNK_SIZE)
+        self._c_chunk.setValidator(chunk_validator)
+        self._c_chunk.setToolTip(
+            f"TTTR records read per iteration (default {DEFAULT_CHUNK_SIZE}, "
+            f"minimum {MIN_CHUNK_SIZE}).\n"
+            "Memory / speed trade-off only — it does not change the result."
+        )
 
-        cfg_hlay.addWidget(fields_w, stretch=1)
+        # Row 2: instrument values; row 4: calibration factor (spans the free
+        # columns) next to the chunk size.
+        cg.addWidget(QLabel("Rep. rate (MHz):"), 2, 0)
+        cg.addWidget(self._cal_frep, 2, 1)
+        cg.addWidget(QLabel("TCSPC bins:"), 2, 2)
+        cg.addWidget(self._c_tcspc, 2, 3)
 
-        # ── right: action buttons ────────────────────────────────────
-        btn_col = QVBoxLayout()
-        btn_col.setSpacing(4)
+        cg.addWidget(QLabel("Factor:"), 4, 0)
+        cg.addWidget(self._cal_factor, 4, 1, 1, 2)
+        cg.addWidget(QLabel("Chunk size:"), 4, 4)
+        cg.addWidget(self._c_chunk, 4, 5)
+
+        cfg_vlay.addWidget(fields_w)
+
+        # ── action buttons, in a row under the fields ────────────────
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
+
+        self._populate_btn = QPushButton("Populate config")
+        self._populate_btn.setToolTip(
+            "Read the header of the first .ptu in the PTU folder and fill in "
+            "what it reports (frames, lines, pixels, TCSPC bins, f_rep).\n"
+            "Values the header does not carry are left as they are."
+        )
+        self._populate_btn.setEnabled(False)  # needs a PTU folder first
+        self._populate_btn.setStyleSheet(S.BTN_SMALL)
+        btn_row.addWidget(self._populate_btn)
+        btn_row.addWidget(_vsep())
+
+        # Both read the File/Phasor tabs' current settings: usable as soon as a
+        # PTU is loaded there (no reconstruction needed), but not before.
         self._load_scan_btn = QPushButton("↓ Scan config")
         self._load_scan_btn.setToolTip(
-            "Copy scan config from the currently reconstructed file"
+            "Copy the scan config currently set in the File tab\n"
+            "(enabled once a PTU is loaded there)"
         )
         self._load_cal_btn = QPushButton("↓ Calibration")
         self._load_cal_btn.setToolTip(
-            "Copy calibration (f_rep) from the currently reconstructed file"
+            "Copy the calibration factor (Phasor tab) and f_rep (File tab)\n"
+            "(enabled once a PTU is loaded there)"
         )
         for b in (self._load_scan_btn, self._load_cal_btn):
             b.setEnabled(False)
             b.setStyleSheet(S.BTN_SMALL)
-            btn_col.addWidget(b)
+            btn_row.addWidget(b)
 
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.HLine)
-        sep2.setStyleSheet(S.SEPARATOR)
-        btn_col.addWidget(sep2)
+        btn_row.addWidget(_vsep())
 
         self._load_cfg_btn = QPushButton("Load JSON…")
         self._save_cfg_btn = QPushButton("Save JSON…")
         for b in (self._load_cfg_btn, self._save_cfg_btn):
             b.setStyleSheet(S.BTN_SMALL)
-            btn_col.addWidget(b)
+            btn_row.addWidget(b)
 
-        btn_col.addStretch()
-        cfg_hlay.addLayout(btn_col)
+        btn_row.addStretch()
+        cfg_vlay.addLayout(btn_row)
         ilay.addWidget(cfg_box)
 
         # ── 3. Export sections ─────────────────────────────────────────
@@ -1273,6 +1313,11 @@ class BatchPanel(QWidget):
         self._save_cfg_btn.clicked.connect(self._on_save_json)
         self._load_scan_btn.clicked.connect(self._on_load_scan)
         self._load_cal_btn.clicked.connect(self._on_load_calibration)
+        self._populate_btn.clicked.connect(self._on_populate_config)
+        # Populate needs a PTU folder — follow the field, typed or browsed.
+        self._ptu_edit.textChanged.connect(self._update_populate_enabled)
+        # The ↓ buttons need a PTU loaded in the File tab.
+        self.state.file_loaded.connect(self._update_copy_enabled)
         self.state.dataset_changed.connect(self._on_dataset_changed)
 
     # ── directory pickers ────────────────────────────────────────────────
@@ -1289,43 +1334,94 @@ class BatchPanel(QWidget):
 
     # ── Config JSON ──────────────────────────────────────────────────────
 
+    def _accum_list(self, n_seqs: int, *, strict: bool) -> list[int]:
+        """Parse Accum/seq into one int per sequence.
+
+        A single value is replicated across all sequences. With *strict* a
+        length that is neither 1 nor *n_seqs* raises (used at run time); saving
+        is lenient so a half-edited field can still be written out.
+        """
+        parts = [
+            p.strip() for p in self._c_accu.text().split(",") if p.strip()
+        ]
+        if not parts:
+            parts = ["1"]
+        try:
+            vals = [int(p) for p in parts]
+        except ValueError as exc:
+            raise ValueError(f"Accum/seq: {exc}") from exc
+        if len(vals) == 1:
+            return vals * max(1, n_seqs)
+        if len(vals) == n_seqs or not strict:
+            return vals
+        raise ValueError(
+            f"Accum/seq: got {len(vals)} values but N seqs = {n_seqs}. "
+            f"Provide 1 value (applied to all) or exactly {n_seqs} values."
+        )
+
     def _config_dict(self) -> dict:
-        """Collect scan config + calibration into a serialisable dict."""
-        return {
-            "scan": dict(
-                frames=int(self._c_frames.text() or 1),
-                lines=int(self._c_lines.text() or 256),
-                pixels=int(self._c_pixels.text() or 256),
-                sequences=int(self._c_seqs.text() or 1),
-                accum_per_seq=self._c_accu.text().strip() or "1",
-                max_detector=int(self._c_maxdet.text() or 4),
-                bidirectional=self._c_bidir.isChecked(),
-                bidirectional_phase_shift=float(
-                    self._c_bidir_shift.text() or 0.0
-                ),
-            ),
-            "calibration": dict(
-                f_rep_mhz=float(self._cal_frep.text() or 40.0),
-                factor=self._cal_factor.text().strip() or "1+0j",
-            ),
-        }
+        """Collect scan config + calibration in the shared core JSON schema.
+
+        Same schema the File tab reads and writes, so configs move between the
+        two tabs unchanged. Chunk size is deliberately not stored — it is a
+        machine-local speed knob, not part of the scan description.
+        """
+        n_seqs = int(self._c_seqs.text() or 1)
+        return build_scan_config_dict(
+            frames=int(self._c_frames.text() or 1),
+            lines=int(self._c_lines.text() or 256),
+            pixels=int(self._c_pixels.text() or 256),
+            sequences=n_seqs,
+            accumulations=self._accum_list(n_seqs, strict=False),
+            max_detector=int(self._c_maxdet.text() or 4),
+            tcspc_bins=int(self._c_tcspc.text() or 4096),
+            bidirectional=self._c_bidir.isChecked(),
+            bidirectional_phase_shift=float(self._c_bidir_shift.text() or 0.0),
+            f_rep_mhz=float(self._cal_frep.text() or 40.0),
+            factor=self._cal_factor.text().strip() or "1+0j",
+        )
 
     def _apply_dict(self, cfg: dict):
-        """Push a config dict back into the UI."""
+        """Push a config dict back into the UI.
+
+        Reads the core schema (``accumulations``: list of ints, one per
+        sequence) and still accepts the legacy batch-only ``accum_per_seq``
+        string from configs saved by earlier versions of this panel.
+        """
         s = cfg.get("scan", {})
-        self._c_frames.setText(str(s.get("frames", 1)))
-        self._c_lines.setText(str(s.get("lines", 256)))
-        self._c_pixels.setText(str(s.get("pixels", 256)))
-        self._c_seqs.setText(str(s.get("sequences", 1)))
-        self._c_accu.setText(str(s.get("accum_per_seq", "1")))
-        self._c_maxdet.setText(str(s.get("max_detector", 4)))
-        self._c_bidir.setChecked(bool(s.get("bidirectional", False)))
-        self._c_bidir_shift.setText(
-            str(s.get("bidirectional_phase_shift", 0.0))
-        )
-        c = cfg.get("calibration", {})
-        self._cal_frep.setText(str(c.get("f_rep_mhz", 40.0)))
-        self._cal_factor.setText(str(c.get("factor", "1+0j")))
+        for key, edit in (
+            ("frames", self._c_frames),
+            ("lines", self._c_lines),
+            ("pixels", self._c_pixels),
+            ("max_detector", self._c_maxdet),
+            ("tcspc_bins", self._c_tcspc),
+        ):
+            if s.get(key):
+                edit.setText(str(int(s[key])))
+
+        accum = s.get("accumulations", s.get("accum_per_seq"))
+        seqs = s.get("sequences")
+        if isinstance(accum, (list, tuple)):
+            if seqs is None:
+                seqs = len(accum)
+            self._c_accu.setText(",".join(str(int(a)) for a in accum))
+        elif accum is not None:
+            self._c_accu.setText(str(accum))
+        if seqs is not None:
+            self._c_seqs.setText(str(seqs))
+
+        if "bidirectional" in s:
+            self._c_bidir.setChecked(bool(s["bidirectional"]))
+        if "bidirectional_phase_shift" in s:
+            self._c_bidir_shift.setText(str(s["bidirectional_phase_shift"]))
+
+        # Absent section → leave the calibration fields alone (so copying just
+        # the scan config does not silently reset factor / f_rep).
+        c = cfg.get("calibration") or {}
+        if "f_rep_mhz" in c:
+            self._cal_frep.setText(str(c["f_rep_mhz"]))
+        if c.get("factor"):
+            self._cal_factor.setText(str(c["factor"]))
 
     def _on_load_json(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1367,27 +1463,7 @@ class BatchPanel(QWidget):
                 ) from None
 
         n_seqs = _int(self._c_seqs, "N seqs", 1)
-
-        # Parse accum/seq — single value or comma-separated list
-        accum_parts = [
-            p.strip() for p in self._c_accu.text().split(",") if p.strip()
-        ]
-        if not accum_parts:
-            accum_parts = ["1"]
-        try:
-            accum_vals = [int(p) for p in accum_parts]
-        except ValueError as exc:
-            raise ValueError(f"Accum/seq: {exc}") from exc
-
-        if len(accum_vals) == 1:
-            line_accumulations = tuple([accum_vals[0]] * n_seqs)
-        elif len(accum_vals) == n_seqs:
-            line_accumulations = tuple(accum_vals)
-        else:
-            raise ValueError(
-                f"Accum/seq: got {len(accum_vals)} values but N seqs = {n_seqs}. "
-                f"Provide 1 value (applied to all) or exactly {n_seqs} values."
-            )
+        line_accumulations = tuple(self._accum_list(n_seqs, strict=True))
 
         try:
             bidir_shift = float(self._c_bidir_shift.text() or 0.0)
@@ -1448,6 +1524,8 @@ class BatchPanel(QWidget):
             lbl_dir=self._lbl_edit.text().strip() or None,
             recursive=self._recursive_chk.isChecked(),
             scan_config=scan_cfg,
+            tcspc_bins=int(self._c_tcspc.text() or 0) or None,
+            chunk_size=int(self._c_chunk.text() or 0) or DEFAULT_CHUNK_SIZE,
             cal_real=cal.real,
             cal_imag=cal.imag,
             image_configs=img_cfgs,
@@ -1495,42 +1573,116 @@ class BatchPanel(QWidget):
 
     # ── load-from-current helpers ────────────────────────────────────────
 
-    def _on_dataset_changed(self):
-        has_data = self.state.has_data()
-        self._load_scan_btn.setEnabled(has_data)
-        self._load_cal_btn.setEnabled(has_data)
+    def _update_copy_enabled(self):
+        """The ↓ buttons copy the File tab's fields — useless before a load."""
+        available = self.state.file_config() is not None
+        self._load_scan_btn.setEnabled(available)
+        self._load_cal_btn.setEnabled(available)
 
-    def _on_load_scan(self):
-        ds = self.state.dataset
-        if ds is None:
-            return
-        sc = ds.attrs.get("scan_config", {})
-        if not sc:
+    def _on_dataset_changed(self):
+        # A reconstruction implies a loaded file; re-check in case this panel
+        # was built after the File tab had already emitted file_loaded.
+        self._update_copy_enabled()
+
+    def _first_ptu(self) -> Path | None:
+        """First .ptu in the chosen folder, honouring 'Include sub-folders'."""
+        ptu_dir = self._ptu_edit.text().strip()
+        if not ptu_dir or not Path(ptu_dir).is_dir():
+            return None
+        glob = "**/*.ptu" if self._recursive_chk.isChecked() else "*.ptu"
+        files = sorted(Path(ptu_dir).glob(glob))
+        return files[0] if files else None
+
+    def _update_populate_enabled(self):
+        ptu_dir = self._ptu_edit.text().strip()
+        self._populate_btn.setEnabled(bool(ptu_dir) and Path(ptu_dir).is_dir())
+
+    def _on_populate_config(self):
+        """Fill the fields from the first PTU's header — the batch equivalent
+        of 'Read PTU…' in the File tab.
+
+        Only what the header actually reports is written; anything it does not
+        carry (sequences, accumulations, max detector, bidirectional) keeps its
+        current value, and the log says which values came from the file.
+        """
+        from napari_flopa.core.io.loader import read_ptu_file
+
+        path = self._first_ptu()
+        if path is None:
             self._log_line(
-                "No scan config stored in current dataset.", error=True
+                "No .ptu file found in the selected folder.", error=True
             )
             return
-        accum = sc.get("line_accumulations", (1,))
-        self._c_frames.setText(str(sc.get("frames", 1)))
-        self._c_lines.setText(str(sc.get("lines", 256)))
-        self._c_pixels.setText(str(sc.get("pixels", 256)))
-        self._c_seqs.setText(str(len(accum)))
-        self._c_accu.setText(",".join(str(a) for a in accum))
-        self._c_maxdet.setText(str(sc.get("max_detector", 4)))
-        self._c_bidir.setChecked(bool(sc.get("bidirectional", False)))
-        self._c_bidir_shift.setText(
-            str(sc.get("bidirectional_phase_shift", 0.0))
+        try:
+            ptu_data = read_ptu_file(str(path), header=False)
+        except Exception as e:
+            self._log_line(f"Could not read {path.name}: {e}", error=True)
+            return
+
+        tags = ptu_data["header"]
+        constants = ptu_data["constants"]
+        csrc = ptu_data.get("constants_source", {})
+        applied: list[str] = []
+
+        px_x = tags.get("ImgHdr_PixX")
+        px_y = tags.get("ImgHdr_PixY")
+        n_frames = tags.get("ImgHdr_NumberOfFrames")
+        if isinstance(px_x, (int, float)):
+            self._c_pixels.setText(str(int(px_x)))
+            applied.append(f"pixels={int(px_x)}")
+        if isinstance(px_y, (int, float)):
+            self._c_lines.setText(str(int(px_y)))
+            applied.append(f"lines={int(px_y)}")
+        if isinstance(n_frames, (int, float)) and n_frames > 0:
+            self._c_frames.setText(str(int(n_frames)))
+            applied.append(f"frames={int(n_frames)}")
+
+        bins = constants.get("tcspc_bins")
+        if bins:
+            self._c_tcspc.setText(str(int(bins)))
+            applied.append(
+                f"tcspc_bins={int(bins)} "
+                f"({csrc.get('tcspc_bins', 'default')})"
+            )
+        rep = constants.get("repetition_rate") or constants.get("sync_rate_hz")
+        if rep:
+            self._cal_frep.setText(f"{float(rep) / 1e6:.6g}")
+            applied.append(
+                f"f_rep={float(rep) / 1e6:.6g} MHz "
+                f"({csrc.get('repetition_rate', 'default')})"
+            )
+
+        self._log_line(f"Populated from {path.name}: " + ", ".join(applied))
+        self._log_line(
+            "Sequences, accum/seq, max detector and bidirectional are not in "
+            "the header — check them manually."
         )
-        self._log_line("Scan config loaded from current dataset.")
+
+    def _on_load_scan(self):
+        """Copy the scan config the File tab currently shows.
+
+        Those are the tunable fields exposed once a PTU is selected there —
+        reconstruction is not required. The button is disabled until then.
+        """
+        cfg = self.state.file_config()
+        if cfg is None:
+            self._log_line(
+                "Load a PTU file in the File tab first.", error=True
+            )
+            return
+        self._apply_dict({"scan": cfg.get("scan", {})})
+        self._log_line("Scan config copied from the File tab.")
 
     def _on_load_calibration(self):
+        """Copy both halves of the calibration: the factor from the Phasor tab
+        and f_rep from the File tab (falling back to the shared state)."""
         factor = self.state.calib_factor
         self._cal_factor.setText(
             f"{factor.real:.6g}+{factor.imag:.6g}j"
             if factor.imag >= 0
             else f"{factor.real:.6g}{factor.imag:.6g}j"
         )
-        self._log_line(f"Calibration factor loaded: {factor}")
+        self._log_line(f"Calibration copied: factor {factor}")
 
     def _log_line(self, msg: str, *, error: bool = False):
         self._log.appendHtml((_ERR if error else _INFO).format(msg))

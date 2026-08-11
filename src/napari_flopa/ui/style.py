@@ -74,8 +74,8 @@ class C:  # "Color" — raw hex colour tokens
     DANGER_BG_DIS = "#2a1e21"
 
     # Accent — green (succeS / done)
-    SUCCES = "#5fbf74"
-    SUCCES_BG = "#26382c"
+    SUCCES = "#4edbdb"
+    SUCCES_BG = "#264242"
 
     # Accent — amber (warning / secondary title)
     WARNING = "#e0a53a"  # warning label

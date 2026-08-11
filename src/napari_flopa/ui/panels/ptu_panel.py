@@ -49,6 +49,7 @@ from napari_flopa.core.io.markers import (
 from napari_flopa.core.logger import ProgressLogger
 from napari_flopa.core.processing.reconstruction import (
     DEFAULT_CHUNK_SIZE,
+    MIN_CHUNK_SIZE,
     reconstruct_ptu_to_dataset,
 )
 from napari_flopa.ui.state import FlopaState
@@ -96,6 +97,8 @@ class PtuPanel(QWidget):
         self._cfg_calib_factor: complex | None = None
 
         self._build_ui()
+        # Let other tabs (Batch) pull these fields without a reconstruction.
+        self.state.file_config_provider = self._file_config_or_none
 
     # ------------------------------------------------------------------ #
     # Parameter provenance                                                 #
@@ -217,7 +220,8 @@ class PtuPanel(QWidget):
 
         output_row.addWidget(QLabel("Chunk size:"))
         self.chunk_size_spin = QSpinBox()
-        self.chunk_size_spin.setRange(100_000, 100_000_000)
+        # No upper policy limit — the top is just Qt's int ceiling.
+        self.chunk_size_spin.setRange(MIN_CHUNK_SIZE, 2_147_483_647)
         self.chunk_size_spin.setSingleStep(100_000)
         self.chunk_size_spin.setGroupSeparatorShown(True)
         self.chunk_size_spin.setValue(DEFAULT_CHUNK_SIZE)
@@ -513,6 +517,7 @@ class PtuPanel(QWidget):
             self.log_text.clear()
             self.shift_plot_data = None
             self.plot_shift_btn.setEnabled(False)
+            self.state.notify_file_loaded()
 
         except Exception as e:
             QMessageBox.critical(
@@ -566,6 +571,7 @@ class PtuPanel(QWidget):
             self.log_text.clear()
             self.shift_plot_data = None
             self.plot_shift_btn.setEnabled(False)
+            self.state.notify_file_loaded()
         except Exception as e:
             QMessageBox.critical(
                 self, "Demo Load Error", f"Failed to load demo PTU:\n{e}"
@@ -739,14 +745,24 @@ class PtuPanel(QWidget):
             return ["photon_count", "mean_arrival_time"]
         return None  # all
 
-    def _on_save_config_json(self):
-        """Read the UI values, delegate serialisation to core, write the file."""
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save scan config", "scan_config.json", "JSON (*.json)"
-        )
-        if not path:
-            return
-        cfg = build_scan_config_dict(
+    def _file_config_or_none(self) -> dict | None:
+        """Provider for FlopaState.file_config().
+
+        Nothing is exposed until a PTU has been read: before that the config
+        widgets are still hidden at their construction defaults, which are not
+        a config any other tab should copy.
+        """
+        if self.ptu_data is None:
+            return None
+        return self.current_config_dict()
+
+    def current_config_dict(self) -> dict:
+        """The panel's current fields as a core-schema config dict.
+
+        Used both by Save Config and by other tabs pulling the live settings
+        through ``FlopaState.file_config()``.
+        """
+        return build_scan_config_dict(
             frames=self.frames_spin.value(),
             lines=self.lines_spin.value(),
             pixels=self.pixels_spin.value(),
@@ -762,8 +778,16 @@ class PtuPanel(QWidget):
                 self.ptu_filepath.name if self.ptu_filepath else None
             ),
         )
+
+    def _on_save_config_json(self):
+        """Read the UI values, delegate serialisation to core, write the file."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save scan config", "scan_config.json", "JSON (*.json)"
+        )
+        if not path:
+            return
         try:
-            save_config(path, cfg)
+            save_config(path, self.current_config_dict())
         except Exception as e:
             QMessageBox.critical(self, "Save error", str(e))
 

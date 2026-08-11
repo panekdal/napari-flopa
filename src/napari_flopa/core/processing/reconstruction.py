@@ -5,8 +5,10 @@ from tttrkit.ptuio.reconstructor import ImageReconstructor, ScanConfig
 from napari_flopa.core.logger import ProgressLogger
 
 #: TTTR records read per iteration — memory/throughput trade-off only, it does
-#: not affect the result.
+#: not affect the result. Only a lower bound is imposed (very small chunks just
+#: add per-iteration overhead); there is no upper limit.
 DEFAULT_CHUNK_SIZE = 1_000_000
+MIN_CHUNK_SIZE = 100_000
 
 
 def reconstruct_ptu_to_dataset(

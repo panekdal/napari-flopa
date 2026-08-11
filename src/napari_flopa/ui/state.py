@@ -12,10 +12,12 @@ class FlopaState(QObject):
     Signals:
         dataset_changed — new xr.Dataset loaded (after reconstruction)
         calib_factor_changed — phasor calibration factor set by any panel
+        file_loaded — a PTU was read in the File tab (before reconstruction)
     """
 
     dataset_changed = Signal()
     calib_factor_changed = Signal(object)  # complex
+    file_loaded = Signal()  # File tab read a PTU — file_config() now has data
 
     def __init__(self):
         super().__init__()
@@ -26,6 +28,14 @@ class FlopaState(QObject):
         # --- Instrument / calibration (shared across panels) ---
         self.frep_mhz: float = 40.0
         self.calib_factor: complex = 1.0 + 0j
+
+        # --- Live scan config from the File tab ---
+        # Pull, not push: PtuPanel registers a callable returning its fields as
+        # a core-schema config dict, so a reader (BatchPanel) always sees the
+        # current values without every spin box having to emit on each edit.
+        # The callable returns None while no PTU is loaded — the fields are
+        # untouched defaults then, not a config anyone should copy.
+        self.file_config_provider = None
 
     # ------------------------------------------------------------------ #
     # Setters — emit signals so widgets update automatically              #
@@ -52,3 +62,13 @@ class FlopaState(QObject):
 
     def has_data(self) -> bool:
         return self.dataset is not None
+
+    def file_config(self) -> dict | None:
+        """The File tab's current scan config, or None if no PTU is loaded."""
+        if self.file_config_provider is None:
+            return None
+        return self.file_config_provider()
+
+    def notify_file_loaded(self):
+        """Called by PtuPanel once a PTU header has been read."""
+        self.file_loaded.emit()
