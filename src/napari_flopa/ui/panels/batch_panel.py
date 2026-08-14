@@ -1402,9 +1402,9 @@ class BatchPanel(QWidget):
             line_accumulations=line_accumulations,
             bidirectional=self._c_bidir.isChecked(),
             bidirectional_phase_shift=bidir_shift,
-            frame_start_marker_channel=(4,),
-            line_start_marker_channel=(1,),
-            line_stop_marker_channel=(2,),
+            frame_start_marker_channel=4,
+            line_start_marker_channel=1,
+            line_stop_marker_channel=2,
         )
 
     def _cal_complex(self) -> complex:

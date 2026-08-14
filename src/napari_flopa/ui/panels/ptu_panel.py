@@ -641,9 +641,9 @@ class PtuPanel(QWidget):
                 bidirectional_phase_shift=self.bidir_phase_spin.value(),
                 line_accumulations=accumulations,
                 max_detector=self.max_detector_spin.value(),
-                frame_start_marker_channel=(4,),
-                line_start_marker_channel=(1,),
-                line_stop_marker_channel=(2,),
+                frame_start_marker_channel=4,
+                line_start_marker_channel=1,
+                line_stop_marker_channel=2,
             )
             best_shift, plot_data = estimate_bidirectional_shift(
                 reader=self.ptu_data["reader"],
@@ -810,9 +810,9 @@ class PtuPanel(QWidget):
             bidirectional=self.bidir_group.isChecked(),
             bidirectional_phase_shift=self.bidir_phase_spin.value(),
             max_detector=self.max_detector_spin.value(),
-            frame_start_marker_channel=(4,),
-            line_start_marker_channel=(1,),
-            line_stop_marker_channel=(2,),
+            frame_start_marker_channel=4,
+            line_start_marker_channel=1,
+            line_stop_marker_channel=2,
         )
 
     def _run_reconstruction(self):
