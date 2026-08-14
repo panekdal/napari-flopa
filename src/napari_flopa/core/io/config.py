@@ -1,25 +1,3 @@
-"""Read/write scan-configuration files (JSON).
-
-Schema::
-
-    {
-      "ptu_filename": "scan.ptu",     # optional — recorded for reference only;
-                                      #   Load Config never uses it
-      "scan": {
-        "frames", "lines", "pixels", "sequences",
-        "accumulations": [1, 3, ...], # one int per sequence
-        "max_detector",
-        "tcspc_bins",                 # optional — omitted by writers that
-                                      #   have no such field (e.g. Batch)
-        "bidirectional", "bidirectional_phase_shift"
-      },
-      "calibration": {"factor": "1+0j"}
-    }
-
-Configs written before the repetition rate became header-only may still carry
-``calibration.f_rep_mhz``; readers ignore it.
-"""
-
 import json
 
 
@@ -38,9 +16,7 @@ def build_scan_config_dict(
     ptu_filename=None,
 ) -> dict:
     """Assemble the serialisable scan-config dict from primitive values.
-
-    ``tcspc_bins`` is omitted from the result when None, for callers that have
-    no such field; readers treat every key as optional.
+    Readers treat every key as optional.
     """
     cfg: dict = {
         "scan": {

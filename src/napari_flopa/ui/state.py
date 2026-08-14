@@ -24,25 +24,11 @@ class FlopaState(QObject):
 
         # --- Dataset ---
         self.dataset: xr.Dataset | None = None
-
-        # --- Instrument / calibration (shared across panels) ---
-        # Read-only mirror of the loaded file's header rate: set from the
-        # constants in set_dataset() and never written by the UI, so it cannot
-        # drift from the value the phasor data was reconstructed with.
         self.frep_mhz: float = 40.0
         self.calib_factor: complex = 1.0 + 0j
-
-        # --- Live scan config from the File tab ---
-        # Pull, not push: PtuPanel registers a callable returning its fields as
-        # a core-schema config dict, so a reader (BatchPanel) always sees the
-        # current values without every spin box having to emit on each edit.
-        # The callable returns None while no PTU is loaded — the fields are
-        # untouched defaults then, not a config anyone should copy.
         self.file_config_provider = None
 
-    # ------------------------------------------------------------------ #
-    # Setters — emit signals so widgets update automatically              #
-    # ------------------------------------------------------------------ #
+    # Setters
 
     def set_dataset(self, ds: xr.Dataset, constants: dict):
         self.dataset = ds
@@ -56,9 +42,7 @@ class FlopaState(QObject):
         self.calib_factor = complex(factor)
         self.calib_factor_changed.emit(self.calib_factor)
 
-    # ------------------------------------------------------------------ #
     # Accessors                                                            #
-    # ------------------------------------------------------------------ #
 
     def has_data(self) -> bool:
         return self.dataset is not None

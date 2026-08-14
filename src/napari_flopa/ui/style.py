@@ -83,14 +83,12 @@ class C:  # "Color" — raw hex colour tokens
     TITLE_PLAIN = "#c8ccd2"  # GROUP_PRIMARY #plain variant (light gray)
     TITLE_NESTED = "#c9a24a"  # GROUP_NESTED title (amber)
 
-    # Stale indicator (aligned to danger / success)
+    # Stale indicator
     STALE_INACTIVE = "#565e68"
     STALE_STALE = "#e05656"
     STALE_FRESH = "#5fbf74"
 
     # Parameter provenance (source: metadata / default / user / estimated)
-    # Gold=metadata; grey=default; blue=user; amber=estimated (heuristic,
-    # verify me). (Red/green are reserved for the plot stale/fresh indicator.)
     PROV_METADATA = "#d9c45e"
     PROV_DEFAULT = "#868e93"
     PROV_USER = "#4a90d9"
@@ -107,7 +105,7 @@ class S:  # "Style" — Qt stylesheet strings
 
     # ── Labels ────────────────────────────────────────────────────────────────
 
-    # Provenance dot, keyed by source ('metadata' | 'default' | 'user')
+    # Provenance dot, keyed by source
     PROV_DOT = {
         "metadata": f"color: {C.PROV_METADATA}; font-size: 11px;",
         "default": f"color: {C.PROV_DEFAULT}; font-size: 11px;",
@@ -115,7 +113,7 @@ class S:  # "Style" — Qt stylesheet strings
         "estimated": f"color: {C.PROV_ESTIMATED}; font-size: 11px;",
     }
 
-    # Status line levels — see ui/widgets/status_label.py (StatusLabel)
+    # Status line levels
     STATUS = f"color: {C.TEXT_DIM}; font-size: 11px;"
     STATUS_WARN = f"color: {C.WARNING}; font-size: 10px;"
     STATUS_ERROR = f"color: {C.DANGER_TEXT}; font-size: 10px;"
@@ -130,7 +128,7 @@ class S:  # "Style" — Qt stylesheet strings
     STALE_STALE = f"color: {C.STALE_STALE};    font-size: 16px;"
     STALE_FRESH = f"color: {C.STALE_FRESH};    font-size: 16px;"
 
-    # ── Read-only display (e.g. calibration factor) ───────────────────────────
+    # ── Read-only display ─────────────────────────────────────────────────────
 
     DISPLAY = f"color: {C.TEXT_MUTED}; font-family: monospace;"
 
@@ -143,21 +141,12 @@ class S:  # "Style" — Qt stylesheet strings
 
     BTN_SUCCESS = f"QPushButton {{ color: {C.SUCCES}; }}"
 
-    # Colour only, so napari's own button styling stays in charge. Its rules
-    # set `background-color` for the normal / :hover / :pressed / :checked
-    # states and never set `color` outside :disabled — so overriding just the
-    # text colour conflicts with nothing, and hover, press and the greyed-out
-    # disabled look all keep working. Set `background` here instead (as
-    # BTN_STOP and BTN_DET_ON do) and the widget rule outranks napari's,
-    # killing the hover highlight unless every state is re-declared.
     BTN_RUN = f"QPushButton {{ color: {C.SUCCES}; min-width: 50px;}}"
 
-    # Colour only, same reasoning as BTN_RUN above.
     BTN_STOP = f"QPushButton {{ color: {C.DANGER_TEXT}; min-width: 50px;}}"
 
     BTN_SMALL = "font-size: 10px;"
 
-    # Detector toggle buttons (cyan = active, gray = inactive, dark = disabled)
     BTN_DET_ON = (
         f"QPushButton {{ background: {C.ACCENT_BG}; color: {C.ACCENT}; "
         f"border: 1px solid {C.ACCENT_DIM}; border-radius: 3px; "
@@ -202,7 +191,6 @@ class S:  # "Style" — Qt stylesheet strings
 
     # ── Group boxes ───────────────────────────────────────────────────────────
 
-    # Primary sections — gold title; set objectName("plain") for the gray variant.
     GROUP_PRIMARY = f"""
     QGroupBox {{
         margin-top: 14px;
@@ -226,9 +214,6 @@ class S:  # "Style" — Qt stylesheet strings
     }}
     """
 
-    # Titleless container — same surface as GROUP_PRIMARY so it lines up with
-    # the titled sections above it, minus the top margin those reserve for
-    # their title text (nothing to reserve here).
     GROUP_PLAIN = f"""
     QGroupBox {{
         margin-top: 0px;
@@ -238,7 +223,6 @@ class S:  # "Style" — Qt stylesheet strings
     }}
     """
 
-    # Secondary / nested sections — amber title.
     GROUP_NESTED = f"""
     QGroupBox {{
         margin-top: 1px;
@@ -252,11 +236,6 @@ class S:  # "Style" — Qt stylesheet strings
     }}
     """
 
-    # Checkable subsection (e.g. Bidirectional Scan, Smoothing, Calibration).
-    # Explicit BG_SECTION fill so it matches a surrounding section exactly (a
-    # stylesheet with no background-color makes Qt paint the darker default
-    # window colour instead). Extra top margin keeps the checkable title clear
-    # of the row below it; plain gray title.
     GROUP_CHECKABLE = f"""
     QGroupBox {{
         background-color: {C.BG_SECTION};
@@ -275,7 +254,6 @@ class S:  # "Style" — Qt stylesheet strings
     }}
     """
 
-    # Top-level dock container title in teal — used for FLIM View and similar wrappers.
     GROUP_DOCK = f"""
     QGroupBox {{
         margin-top: 14px;
@@ -288,7 +266,6 @@ class S:  # "Style" — Qt stylesheet strings
     }}
     """
 
-    # Compact bordered box for dense panel layouts (e.g. batch_panel sections).
     GROUP_COMPACT = f"""
     QGroupBox {{
         border: 1px solid {C.BORDER};
@@ -306,8 +283,6 @@ class S:  # "Style" — Qt stylesheet strings
     """
 
     # ── Log / console / header views ──────────────────────────────────────────
-    # Shared by the reconstruction log (QPlainTextEdit) and the header info
-    # summary + full-header dialog (QTextEdit) so all mono text panels match.
 
     LOG = (
         f"QPlainTextEdit, QTextEdit {{ background: {C.BG_DEEP}; color: {C.TEXT_MUTED}; "

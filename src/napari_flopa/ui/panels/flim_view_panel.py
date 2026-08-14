@@ -866,9 +866,6 @@ class FlimViewPanel(QWidget):
         if not path_str:
             return
 
-        # Taken literally — whatever was typed is the base name, so a dot in it
-        # survives ("scan_44.56"). Type an extension and you get it twice; the
-        # per-type suffix below is always appended.
         base = Path(path_str)
         try:
             if do_int:

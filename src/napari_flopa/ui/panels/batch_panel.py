@@ -4,8 +4,8 @@ Batch analysis panel.
 Reconstructs a directory of .ptu files — or a hand-picked subset of it — with
 a shared ScanConfig + calibration factor and writes any combination of:
   • FLIM RGB / Intensity / Lifetime  TIFF images
-  • Phasor CSV tables  (per-object intensity-weighted means, or per-pixel)
-  • Decay CSV tables   (time_ns column + one column per curve combination)
+  • Phasor CSV tables  (per-object or per-pixel)
+  • Decay CSV tables
 
 Each export type has independent aggregation passes: add multiple rows to
 run e.g. "no aggregation" AND "sum-frames + sum-detectors" in one batch.
@@ -18,7 +18,7 @@ Output: written to  <ptu_dir>/batch_<timestamp>/
 Processing: sequential in a QThread — UI stays responsive; Stop aborts
 between files.
 
-Scan config + calibration can be saved/loaded as JSON (stdlib ``json``).
+Scan config + calibration can be saved/loaded.
 """
 
 import csv
@@ -80,18 +80,14 @@ _OK = '<span style="color:#60cc60">{}</span>'
 _INFO = '<span style="color:#aaaaaa">{}</span>'
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# _AggRow  — one aggregation / processing configuration row
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 class _AggRow(QWidget):
     """
     One aggregation pass: F / S / D checkboxes plus kind-specific extras.
 
-    kind='images'  → Smooth checkbox + kernel spinbox
-    kind='decay'   → Shift spinbox + Norm checkbox
-    kind='phasor'  → no extras (mode is shared across all rows)
+    kind='images'  → no extras
+    kind='phasor'  → no extras
+    kind='decay'   → + Norm checkbox
+
 
     Emits remove_requested(self) when × is clicked.
     """
@@ -118,8 +114,6 @@ class _AggRow(QWidget):
         self.smooth_chk = self.smooth_spin = None
         self.shift_spin = self.norm_chk = None
 
-        # kind == "images" adds nothing: smoothing is set once for the whole
-        # section, so it applies to the single slice and every set alike.
         if kind == "decay":
             lay.addWidget(_vsep())
             self.norm_chk = QCheckBox("Norm")
@@ -154,6 +148,7 @@ class _AggRow(QWidget):
 
 
 def _vsep() -> QFrame:
+    # vertical separator (line)
     f = QFrame()
     f.setFrameShape(QFrame.VLine)
     f.setStyleSheet(S.SEPARATOR)
@@ -163,12 +158,9 @@ def _vsep() -> QFrame:
 def _needed_outputs(p: dict) -> list[str] | None:
     """Reconstruction outputs the enabled exports actually consume.
 
-    The same three levels the File tab offers, since asking for less is
-    faster: counts only, counts + lifetime, or everything. ``None`` means
-    "compute all outputs" — what `reconstruct_ptu_to_dataset` does with it.
+    The same three levels the File tab offers.
+    ``None`` means "compute all outputs".
 
-    Phasor and decay tables need the full reconstruction, so they win over
-    whatever the image section asks for.
     """
     if p.get("phasor_configs") or p.get("decay_configs"):
         return None
@@ -188,21 +180,10 @@ def _first_set(typed, derived) -> float:
 
 
 def _transparent(widget: QWidget, name: str) -> QWidget:
-    """Let the surrounding group box's tint show through a container widget.
-
-    napari's base style sheet carries a bare ``QWidget { background-color: … }``
-    rule, so a plain container paints the theme background over a section's
-    tinted surface. The ``#objectName`` selector is what keeps this override
-    from cascading into the container's children.
-    """
+    """Let the surrounding group box's tint show through a container widget."""
     widget.setObjectName(name)
     widget.setStyleSheet(f"QWidget#{name} {{ background: transparent; }}")
     return widget
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Export sections  (checkable QGroupBox + list of _AggRow)
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class _ExportSection(QGroupBox):
@@ -236,8 +217,6 @@ class _ExportSection(QGroupBox):
         hint.setStyleSheet(S.HINT)
         lay.addWidget(hint)
 
-        # Left on napari's default surface on purpose — the darker block sets
-        # the pass list apart from the section's tinted background.
         self._rows_widget = QWidget()
         self._rows_lay = QVBoxLayout(self._rows_widget)
         self._rows_lay.setContentsMargins(0, 0, 0, 0)
@@ -285,10 +264,7 @@ class _ImagesSection(_ExportSection):
 
     def __init__(self, parent=None):
         super().__init__("Images", kind="images", parent=parent)
-        # Apply the initial widget states. This cannot happen in
-        # _add_type_widgets(): the base class only creates _rows_widget, which
-        # _on_mode_toggled() touches, *after* that hook returns. Without this
-        # the checked radio and what is shown disagree until the user clicks.
+        # Apply the initial widget states.
         self._on_mode_toggled(self._sf_radio.isChecked())
         self._on_flim_toggled(self._flim_chk.isChecked())
 
@@ -327,14 +303,15 @@ class _ImagesSection(_ExportSection):
         self._lt_hi = QLineEdit()
         self._int_lo = QLineEdit()
         self._int_hi = QLineEdit()
-        for e, which, what, unit in (
-            (self._lt_lo, "Minimum", "lifetime (ns)", "min"),
-            (self._lt_hi, "Maximum", "lifetime (ns)", "max"),
+        for e, which, unit in (
+            (self._lt_lo, "Minimum", "min"),
+            (self._lt_hi, "Maximum", "max"),
         ):
             e.setValidator(QDoubleValidator(0.0, 9999.0, 4))
             e.setToolTip(
-                f"{which} {what} for the FLIM RGB LUT — "
-                f"empty = auto ({unit} of each exported image)"
+                f"{which} lifetime for the FLIM RGB LUT\n"
+                "ns when the header carries the TCSPC resolution, raw channels otherwise.\n"
+                f"Empty = auto ({unit} of each exported image)."
             )
         for e, which, unit in (
             (self._int_lo, "Minimum", "min"),
@@ -364,9 +341,7 @@ class _ImagesSection(_ExportSection):
         # Colormap and both ranges only shape the FLIM RGB composite.
         self._flim_chk.toggled.connect(self._on_flim_toggled)
 
-        # Smoothing — section level, so it applies to the single slice and to
-        # every set alike (same split as the FLIM View tab: counts are box
-        # smoothed, lifetime is photon-weighted).
+        # Smoothing
         row_sm = QHBoxLayout()
         row_sm.setSpacing(3)
         self._sm_int_chk = QCheckBox("Smooth Int.")
@@ -406,7 +381,6 @@ class _ImagesSection(_ExportSection):
         lay.addLayout(row3)
 
         # Single-slice selector; its visibility follows the radio above
-        # (applied once in __init__, see below).
         self._sf_widget = _transparent(QWidget(), "sfRow")
         sf_lay = QHBoxLayout(self._sf_widget)
         sf_lay.setContentsMargins(0, 0, 0, 0)
@@ -436,11 +410,7 @@ class _ImagesSection(_ExportSection):
         return sp
 
     def set_dims(self, frames: int, sequences: int, detectors: int):
-        """Cap the single-slice pickers at what the scan config declares.
-
-        Indices are zero-based, so a 1-frame scan may only pick frame 0. Values
-        already above a new maximum are clamped by QSpinBox itself.
-        """
+        """Cap the single-slice pickers at what the scan config declares."""
         for spin, n in (
             (self._sf_frame, frames),
             (self._sf_seq, sequences),
@@ -449,7 +419,7 @@ class _ImagesSection(_ExportSection):
             spin.setMaximum(max(0, int(n) - 1))
 
     def _on_flim_toggled(self, on: bool):
-        """Colormap and ranges are meaningless without the RGB composite."""
+        """Colormap and ranges are diasbled unless RGB composite is wanted."""
         for w in (
             self._cmap_combo,
             self._lt_lo,
@@ -461,7 +431,6 @@ class _ImagesSection(_ExportSection):
 
     def _on_mode_toggled(self, single: bool):
         self._sf_widget.setVisible(single)
-        # Disable/enable the aggregation passes section
         self._rows_widget.setEnabled(not single)
 
     def get_configs(self) -> list[dict]:
@@ -553,7 +522,7 @@ class _PhasorSection(_ExportSection):
 
 
 class _DecaySection(_ExportSection):
-    """Export decay CSV: time_ns + one column per curve (always per-file)."""
+    """Export decay CSV: time + one column per curve (always per-file)."""
 
     def __init__(self, parent=None):
         super().__init__("Decay table (CSV)", kind="decay", parent=parent)
@@ -669,7 +638,7 @@ class _BatchWorker(QObject):
                 )
             )
 
-        # Single merged decay table — columns, not rows: one per file × set,
+        # Single merged decay table — one col per file × set,
         # named <file>_<label>, all against the same time axis.
         if p.get("single_table") and decay_merged:
             _write_decay_csv(
@@ -687,8 +656,6 @@ class _BatchWorker(QObject):
         )
         self.log.emit((_OK if n_err == 0 else _ERR).format(summary))
         self.finished.emit(summary)
-
-    # ── per-file dispatch ────────────────────────────────────────────────
 
     def _process_one(
         self, ptu_path: Path, lbl_dir, out_dir: Path, p: dict
@@ -717,6 +684,12 @@ class _BatchWorker(QObject):
             tcspc_channels_override=p.get("tcspc_bins"),
             chunk_size=p.get("chunk_size") or DEFAULT_CHUNK_SIZE,
         )
+        constants = dict(ptu_data.get("constants") or {})
+        if p.get("tcspc_bins"):
+            constants["tcspc_bins"] = p["tcspc_bins"]
+        ds.attrs["instrument_params"] = constants
+        ds.attrs["scan_config"] = p["scan_config"].to_dict()
+        ds.attrs["source_filename"] = ptu_path.name
 
         # Apply calibration factor
         cal = complex(p.get("cal_real", 1.0), p.get("cal_imag", 0.0))
@@ -766,8 +739,6 @@ class _BatchWorker(QObject):
         if p.get("per_file_table") and phasor_file_rows:
             _write_csv(out_dir / f"{stem}_phasor.csv", phasor_file_rows)
 
-        # Decay: every set contributes columns to ONE table per file. (Each
-        # set used to write the same filename, so only the last survived.)
         decay_time = np.empty(0)
         decay_cols: dict[str, np.ndarray] = {}
         for cfg in p.get("decay_configs", []):
@@ -777,8 +748,6 @@ class _BatchWorker(QObject):
             if decay_time.size == 0:
                 decay_time = t_ns
             for lbl, counts in curves.items():
-                # Two sets can produce the same label only if they aggregate
-                # identically; keep the first and note the clash.
                 if lbl in decay_cols:
                     self.log.emit(
                         _INFO.format(f"  duplicate decay column {lbl} skipped")
@@ -792,8 +761,7 @@ class _BatchWorker(QObject):
 
         return phasor_file_rows, decay_time, decay_cols
 
-    # ── image export ─────────────────────────────────────────────────────
-
+    # image export
     def _export_images(self, ds, cfg: dict, stem: str, out_dir: Path):
         """Write TIFF images for one aggregation config pass."""
         from napari_flopa.core.processing.image_utils import (
@@ -810,13 +778,10 @@ class _BatchWorker(QObject):
             def imsave(p, a, **kw):
                 tifffile.imsave(str(p), a)
 
-        res_ns = float(
-            ds.attrs.get("instrument_params", {}).get(
-                "tcspc_resolution_ns", 1.0
-            )
-        )
+        ip = ds.attrs.get("instrument_params", {})
+        res_ns = float(ip.get("tcspc_resolution_ns", 1.0))
+        lt_unit = ip.get("resolution_unit", "ch")
 
-        # Build iteration combos
         if cfg.get("single_frame"):
             _sh = {"frame": "F", "sequence": "S", "channel": "D"}
             sel = {}
@@ -852,8 +817,6 @@ class _BatchWorker(QObject):
                 else None
             )
 
-            # Same order as FlimViewPanel._get_smoothed: lifetime is weighted
-            # by the *unsmoothed* counts, then the counts are smoothed.
             sm_tag = ""
             if cfg.get("smooth_lt") and cl is not None and ci is not None:
                 k_lt = cfg.get("smooth_lt_k", 3)
@@ -867,10 +830,6 @@ class _BatchWorker(QObject):
             pfx = f"{stem}_{suffix}{sm_tag}" if suffix else f"{stem}{sm_tag}"
 
             if cfg.get("export_int") and ci is not None:
-                # Real photon counts, not rescaled — same as FlimViewPanel's
-                # _save_intensity, so the TIFF stays quantitative and images
-                # from different files stay comparable. (Rounded because
-                # smoothing and aggregation leave the array floating point.)
                 counts = np.rint(ci).astype(np.uint32)
                 imsave(
                     out_dir / f"{pfx}_intensity.tif",
@@ -893,10 +852,6 @@ class _BatchWorker(QObject):
             ):
                 cl_ns = cl.astype(np.float32) * res_ns
                 ci_f = ci.astype(np.float32)
-
-                # Ranges: a typed value wins, otherwise min/max of *this*
-                # image — aggregation changes the extremes, so a per-image
-                # range is the only one that is always in scale.
                 lt_auto = auto_range(cl_ns)
                 int_auto = auto_range(ci_f)
                 lt_lo = _first_set(cfg.get("lt_ns_lo"), lt_auto[0])
@@ -904,9 +859,6 @@ class _BatchWorker(QObject):
                 int_lo = _first_set(cfg.get("int_lo"), int_auto[0])
                 int_hi = _first_set(cfg.get("int_hi"), int_auto[1])
 
-                # Same compositing function the FLIM View display and its
-                # export use, so a batch _flim.png matches what the interactive
-                # tab would produce for the same slice and ranges.
                 rgb = flim_rgb(
                     ci_f, cl_ns, lt_lut, (lt_lo, lt_hi), (int_lo, int_hi)
                 )
@@ -915,19 +867,18 @@ class _BatchWorker(QObject):
                     (rgb * 255).clip(0, 255).astype(np.uint8),
                     check_contrast=False,
                 )
-                # Sidecar naming the mapping, exactly as the FLIM View export
-                # does — an RGB is not readable without these numbers.
+
                 (out_dir / f"{pfx}_flim.txt").write_text(
                     flim_export_info(
                         cfg.get("cmap", "rainbow"),
                         (lt_lo, lt_hi),
                         (int_lo, int_hi),
-                        unit="ns",
+                        unit=lt_unit,
                     ),
                     encoding="utf-8",
                 )
 
-    # ── phasor extraction ────────────────────────────────────────────────
+    # phasor extraction
 
     def _extract_phasor(
         self, ds, cfg: dict, stem: str, lbl_paths: list, lbl_dir=None
@@ -956,10 +907,6 @@ class _BatchWorker(QObject):
                 else None
             )
 
-            # Phasor smoothing must go through smooth_phasor: it is
-            # photon-weighted and skips invalid pixels. A plain box filter
-            # (scipy uniform_filter) spreads every NaN across its kernel, which
-            # left nothing finite and produced an empty table.
             smoothed = False
             if smooth and g2d.ndim == 2 and pc2d is not None:
                 from tttrkit.ptuio.utils import smooth_phasor
@@ -988,8 +935,6 @@ class _BatchWorker(QObject):
                         from skimage.io import imread
 
                         lbl_arr = imread(str(lbl_path)).astype(np.int32)
-                        # Path relative to the labels folder, so masks of the
-                        # same name in different sub-folders stay distinct
                         # ("mask1.tif" vs "sub/mask1.tif").
                         lbl_name = (
                             lbl_path.relative_to(lbl_dir).as_posix()
@@ -1057,7 +1002,7 @@ class _BatchWorker(QObject):
                         )
         return rows
 
-    # ── decay extraction ─────────────────────────────────────────────────
+    # decay extraction
 
     def _extract_decay(
         self, ds, cfg: dict
@@ -1079,8 +1024,7 @@ class _BatchWorker(QObject):
             "sequence": "agg_seqs",
             "channel": "agg_dets",
         }
-        # Dimensions the histogram actually carries, in a fixed order, split
-        # into summed ones (fixed '∑' token) and free ones (one column each).
+
         present = [d for d in ("frame", "sequence", "channel") if d in da.dims]
         summed = [d for d in present if cfg.get(agg_keys[d])]
         for dim in summed:
@@ -1119,9 +1063,7 @@ class _BatchWorker(QObject):
         return time_ns, curves
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _agg_combos(ds, cfg: dict) -> tuple[list[str], list[tuple[dict, str]]]:
@@ -1200,9 +1142,7 @@ def _write_decay_csv(
             w.writerow(row)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # BatchPanel
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class BatchPanel(QWidget):
@@ -1224,9 +1164,6 @@ class BatchPanel(QWidget):
         self.viewer = viewer
         self._thread: QThread | None = None
         self._worker: _BatchWorker | None = None
-        # The input, in two parts: the folder everything is relative to (also
-        # where output lands), and an optional explicit pick within it. Empty
-        # pick = process every .ptu in the folder.
         self._ptu_dir: Path | None = None
         self._selected_files: list[Path] = []
         self._build_ui()
@@ -1253,9 +1190,6 @@ class BatchPanel(QWidget):
         dir_box.setStyleSheet(S.GROUP_PRIMARY)
         dg = QGridLayout(dir_box)
         dg.setSpacing(3)
-        # Row 0 — the input: a whole folder, or a hand-picked set of files.
-        # Both routes land in the same place, so they sit side by side with one
-        # message reporting whichever was chosen.
         dg.addWidget(QLabel("PTU input:"), 0, 0)
         input_row = QHBoxLayout()
         input_row.setSpacing(6)
@@ -1274,11 +1208,6 @@ class BatchPanel(QWidget):
         self._input_lbl.setWordWrap(True)
         input_row.addWidget(self._input_lbl, 0)
         dg.addLayout(input_row, 0, 1)
-
-        # Row 1 — same shape as row 0: content first, then a trailing stretch
-        # to eat the slack. Without that stretch the capped field would sit
-        # centred in its cell: QGridLayout centres any item narrower than its
-        # cell when no alignment is given.
         dg.addWidget(QLabel("Labels folder:"), 1, 0)
         lbl_row = QHBoxLayout()
         lbl_row.setSpacing(6)
@@ -1309,9 +1238,6 @@ class BatchPanel(QWidget):
         cfg_vlay.setContentsMargins(6, 4, 6, 6)
 
         # ── fields ──────────────────────────────────────────────────
-        # The grid goes straight into the group box's layout: a wrapper
-        # QWidget would match napari's bare `QWidget { background-color: … }`
-        # rule and paint the theme background over the group box's tint.
         cg = QGridLayout()
         cg.setSpacing(3)
         cg.setContentsMargins(0, 2, 0, 2)
@@ -1337,9 +1263,9 @@ class BatchPanel(QWidget):
         )
         self._c_accu.setToolTip(
             "Number of line accumulations per sequence.\n"
-            "• Single integer → same value for every sequence, e.g. 256\n"
+            "• Single integer → same value for every sequence, e.g. 1\n"
             "• Comma-separated list → one value per sequence (count must\n"
-            "  match N seqs), e.g. for 3 sequences: 1,3,256\n"
+            "  match N seqs), e.g. for 3 sequences: 1,3,3\n"
             "Error is raised at run time if count mismatches N seqs."
         )
 
@@ -1363,7 +1289,6 @@ class BatchPanel(QWidget):
             cg.addWidget(QLabel(lbl), 1, col * 2)
             cg.addWidget(w, 1, col * 2 + 1)
 
-        # Instrument row — both values a PTU header can supply
         self._c_tcspc = _le_int(1000)
         # self._c_tcspc.setValidator(QIntValidator(1, 1_048_576))
         self._c_tcspc.setToolTip(
@@ -1389,8 +1314,6 @@ class BatchPanel(QWidget):
         cg.addWidget(bidir_lbl, 3, 2)
         cg.addWidget(self._c_bidir_shift, 3, 3, 1, 3)
 
-        # No repetition-rate field: it is header metadata, read per file during
-        # reconstruction, so a batch-wide override would be wrong by definition.
         self._cal_factor = QLineEdit("1+0j")
         self._cal_factor.setValidator(
             QRegularExpressionValidator(
@@ -1404,9 +1327,6 @@ class BatchPanel(QWidget):
             "Example: 1.0+0.2j  or  0.95-0.05j"
         )
 
-        # Same widget and limits as the File tab's Chunk size, so the two tabs
-        # present the setting identically (no upper policy limit — the top is
-        # just Qt's int ceiling).
         self._c_chunk = QSpinBox()
         self._c_chunk.setRange(MIN_CHUNK_SIZE, 2_147_483_647)
         self._c_chunk.setSingleStep(100_000)
@@ -1419,7 +1339,6 @@ class BatchPanel(QWidget):
             "larger = fewer iterations.\n"
         )
 
-        # Row 2: the two instrument values read per file; row 4: chunk size.
         cg.addWidget(QLabel("TCSPC bins:"), 2, 0)
         cg.addWidget(self._c_tcspc, 2, 1)
         cg.addWidget(QLabel("Calibration:"), 2, 2)
@@ -1443,8 +1362,6 @@ class BatchPanel(QWidget):
         btn_row.addWidget(self._populate_btn)
         btn_row.addWidget(_vsep())
 
-        # Both read the File/Phasor tabs' current settings: usable as soon as a
-        # PTU is loaded there (no reconstruction needed), but not before.
         self._load_scan_btn = QPushButton("↓ Scan cfg")
         self._load_scan_btn.setToolTip(
             "Copy the scan config currently set in the File tab"
@@ -1499,17 +1416,12 @@ class BatchPanel(QWidget):
         ilay.addStretch()
 
         # ── 5. Run controls ────────────────────────────────────────────
-        # Titleless group box so the run row sits on the same surface, and
-        # lines up with, the titled sections above it.
         run_box = QGroupBox()
         apply_style(run_box, S.GROUP_PLAIN)
         run_row = QHBoxLayout(run_box)
         run_row.setContentsMargins(3, 3, 3, 3)
         # run_row.setSpacing(6)
         self._run_btn = QPushButton("Run Batch")
-        # Widen just this one. It has to be a style-sheet rule: a QSS
-        # `min-width` (S.BTN_RUN carries one) overrides setMinimumWidth() and
-        # even setFixedWidth(). Appending wins — equal specificity, last rule.
         self._run_btn.setStyleSheet(
             S.BTN_RUN
             # + "QPushButton { min-width: 100px; }"
@@ -1544,15 +1456,9 @@ class BatchPanel(QWidget):
         # The ↓ buttons need a PTU loaded in the File tab.
         self.state.file_loaded.connect(self._update_copy_enabled)
         self.state.dataset_changed.connect(self._on_dataset_changed)
-
-        # The single-slice pickers may not offer indices the scan config does
-        # not have, so follow the three fields that define those extents.
         for edit in (self._c_frames, self._c_seqs, self._c_maxdet):
             edit.textChanged.connect(self._sync_slice_limits)
         self._sync_slice_limits()
-
-        # Last: it drives widgets from several sections above (the input
-        # message, sub-folder checkbox and Populate button).
         self._update_input_label()
 
     # ── directory pickers ────────────────────────────────────────────────
@@ -1594,7 +1500,6 @@ class BatchPanel(QWidget):
         if not paths:
             return
         self._selected_files = [Path(p) for p in paths]
-        # Their folder still matters: output is written inside it.
         self._ptu_dir = self._selected_files[0].parent
         self._update_input_label()
 
@@ -1624,7 +1529,6 @@ class BatchPanel(QWidget):
         else:
             self._input_lbl.setText("Nothing selected")
             self._input_lbl.setToolTip("")
-        # Recursing into sub-folders only means anything when globbing.
         self._recursive_chk.setEnabled(not self._selected_files)
         self._update_populate_enabled()
 
@@ -1715,9 +1619,6 @@ class BatchPanel(QWidget):
         if "bidirectional_phase_shift" in s:
             self._c_bidir_shift.setText(str(s["bidirectional_phase_shift"]))
 
-        # Absent section → leave the factor alone (so copying just the scan
-        # config does not silently reset it). A legacy `f_rep_mhz` is ignored:
-        # the repetition rate is read from each file's header.
         c = cfg.get("calibration") or {}
         if c.get("factor"):
             self._cal_factor.setText(str(c["factor"]))
@@ -1880,8 +1781,6 @@ class BatchPanel(QWidget):
         self._load_cal_btn.setEnabled(available)
 
     def _on_dataset_changed(self):
-        # A reconstruction implies a loaded file; re-check in case this panel
-        # was built after the File tab had already emitted file_loaded.
         self._update_copy_enabled()
 
     def _first_ptu(self) -> Path | None:
@@ -1890,7 +1789,6 @@ class BatchPanel(QWidget):
         return files[0] if files else None
 
     def _update_populate_enabled(self):
-        # Populate reads a real file, so require one — not merely a folder.
         self._populate_btn.setEnabled(self._first_ptu() is not None)
 
     def _on_populate_config(self):
@@ -1942,8 +1840,6 @@ class BatchPanel(QWidget):
             )
         rep = constants.get("repetition_rate")
         if rep:
-            # Not a field — reconstruction reads it per file. Logged so the
-            # value that will be used is at least visible.
             applied.append(f"rep. rate={float(rep) / 1e6:.6g} MHz (header)")
 
         self._log_line(f"Populated from {path.name}: " + ", ".join(applied))

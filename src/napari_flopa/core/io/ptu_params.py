@@ -26,12 +26,7 @@ PARAMS_BY_NAME: dict[str, TagParam] = {p.name: p for p in TAG_PARAMS}
 
 
 def read_tag(header_tags: dict, name: str):
-    """Return a single param's value from *header_tags* (value only).
-
-    Reads ``TAG_PARAMS[name]``: the transformed tag value if present, else the
-    param's default. Use this anywhere that needs a header constant without the
-    provenance bookkeeping ``read_ptu_file`` does (e.g. the marker reader).
-    """
+    """Return a single param's value from *header_tags* (value only)."""
     p = PARAMS_BY_NAME[name]
     if p.tag in header_tags:
         return p.transform(header_tags[p.tag])

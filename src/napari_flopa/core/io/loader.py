@@ -98,9 +98,8 @@ def read_ptu_file(
     res_src = constants_source["tcspc_resolution"]
     tcspc_resolution = constants["tcspc_resolution"]
 
-    # MeasDesc_Resolution is always in seconds when present (PTU has no unit
-    # tag): the unit is 'ns' when the resolution came from the file, else 'ch'
-    # (raw TCSPC channels) — decided by provenance.
+    # MeasDesc_Resolution is always in seconds when present (PTU has no unit)
+    # the unit is 'ns' when the resolution came from the file, else 'ch'
     constants["tcspc_resolution_ns"] = tcspc_resolution * 1e9
     constants_source["tcspc_resolution_ns"] = res_src
     constants["resolution_unit"] = (
@@ -108,7 +107,7 @@ def read_ptu_file(
     )
     constants_source["resolution_unit"] = res_src
 
-    # omega is exact; 'metadata' only when BOTH inputs came from the header.
+    # omega 'metadata' only when BOTH inputs came from the header.
     constants["omega"] = (
         2 * np.pi * constants["repetition_rate"] * tcspc_resolution
     )
@@ -118,9 +117,8 @@ def read_ptu_file(
         else provenance.DEFAULT
     )
 
-    # buffer=10 spare channels absorbs photons landing just past one laser
-    # period (avoids most TCSPC overflow warnings). The user can still override
-    # the final count via the "TCSPC Bins" field (tcspc_channels_override).
+    # buffer = spare channels, user can still override
+    # the final count via the "TCSPC Bins" field (tcspc_channels_override)
     constants["tcspc_bins"] = estimate_tcspc_bins(header_tags, buffer=10)
     constants_source["tcspc_bins"] = provenance.ESTIMATED
 

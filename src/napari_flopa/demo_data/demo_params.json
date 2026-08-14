@@ -12,7 +12,6 @@
     "bidirectional_phase_shift": 0.0
   },
   "calibration": {
-    "f_rep_mhz": 40.0,
     "factor": "1+0j"
   }
 }
