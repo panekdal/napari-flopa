@@ -3,10 +3,9 @@ from pathlib import Path
 
 import numpy as np
 import xarray as xr
-from matplotlib import cm
+from matplotlib import colormaps
 from qtpy.QtCore import Qt, QTimer, Signal, Slot
 from qtpy.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -16,15 +15,17 @@ from qtpy.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QRadioButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from napari_flopa.core.processing.image_utils import (
+    INTENSITY_COLORMAPS,
+    LIFETIME_COLORMAPS,
     aggregate_dataset,
     colormap_to_lut,
+    flim_export_info,
     flim_rgb,
     smooth_count,
     smooth_weighted,
@@ -186,19 +187,19 @@ class FlimViewPanel(QWidget):
         frame_sel.setMaximumWidth(50)
         sum_frames = QCheckBox("∑")
         sum_frames.setEnabled(n_frames > 1)
-        sum_frames.setToolTip("Sum all frames into one image")
+        sum_frames.setToolTip("Sum all frames")
         seq_sel = QSpinBox()
         seq_sel.setRange(0, max(0, n_sequences - 1))
         seq_sel.setMaximumWidth(50)
         sum_seqs = QCheckBox("∑")
         sum_seqs.setEnabled(n_sequences > 1)
-        sum_seqs.setToolTip("Sum all sequences into one image")
+        sum_seqs.setToolTip("Sum all sequences")
         chan_sel = QSpinBox()
         chan_sel.setRange(0, max(0, n_channels - 1))
         chan_sel.setMaximumWidth(50)
         sum_chans = QCheckBox("∑")
         sum_chans.setEnabled(n_channels > 1)
-        sum_chans.setToolTip("Sum all detector channels into one image")
+        sum_chans.setToolTip("Sum all detector channels")
 
         for row, (lbl, spin, chk) in enumerate(
             [
@@ -271,9 +272,7 @@ class FlimViewPanel(QWidget):
         self.int_colormap_lbl = QLabel("Colormap:")
         int_row2.addWidget(self.int_colormap_lbl)
         self.int_colormap = QComboBox()
-        self.int_colormap.addItems(
-            ["gray", "viridis", "magma", "hot", "cividis"]
-        )
+        self.int_colormap.addItems(INTENSITY_COLORMAPS)
         int_row2.addWidget(self.int_colormap)
         int_ctrl.addLayout(int_row2)
 
@@ -348,9 +347,7 @@ class FlimViewPanel(QWidget):
         self.lt_colormap_lbl = QLabel("Colormap:")
         lt_row2.addWidget(self.lt_colormap_lbl)
         self.lt_colormap = QComboBox()
-        self.lt_colormap.addItems(
-            ["rainbow", "hsv", "viridis", "magma", "cividis"]
-        )
+        self.lt_colormap.addItems(LIFETIME_COLORMAPS)
         lt_row2.addWidget(self.lt_colormap)
         lt_ctrl.addLayout(lt_row2)
 
@@ -404,28 +401,30 @@ class FlimViewPanel(QWidget):
             chk_row.addWidget(chk)
         el.addLayout(chk_row)
 
-        # Row 2: shared Single / Stack radio buttons
-        rb_row = QHBoxLayout()
-        rb_row.setSpacing(2)
-        self._exp_single_rb = QRadioButton("Single")
-        self._exp_single_rb.setChecked(True)
-        self._exp_stack_rb = QRadioButton("Stack")
-        self._exp_mode_grp = QButtonGroup(exp_group)
-        self._exp_mode_grp.addButton(self._exp_single_rb, 0)
-        self._exp_mode_grp.addButton(self._exp_stack_rb, 1)
-        rb_row.addWidget(self._exp_single_rb)
-        rb_row.addWidget(self._exp_stack_rb)
-        rb_row.addStretch()
-        el.addLayout(rb_row)
+        # Row 2: which slice is on screen — i.e. exactly what Save writes.
+        # (Stack export will live in the Batch tab; nothing to choose here.)
+        self._view_lbl = QLabel()
+        self._view_lbl.setStyleSheet(S.STATUS)
+        self._view_lbl.setWordWrap(True)
+        self._view_lbl.setToolTip("The slice / settings currently displayed.")
+        el.addWidget(self._view_lbl)
 
-        # Shape info — shown below Stack radio (relevant for stack context)
-        _shape_dims = ["frame", "sequence", "channel", "line", "pixel"]
+        # Shape info — shown below Stack radio (relevant for stack context).
+        # Letters are the dim initials, except `channel` → D, so it reads as
+        # the detector axis like everywhere else in the UI (D0, D1, …).
+        _shape_letters = {
+            "frame": "F",
+            "sequence": "S",
+            "channel": "D",
+            "line": "Y",
+            "pixel": "X",
+        }
         _shape_parts = [
-            f"{d[0].upper()}: {ds.sizes[d]}"
-            for d in _shape_dims
-            if d in ds.sizes
+            f"{letter}: {ds.sizes[dim]}"
+            for dim, letter in _shape_letters.items()
+            if dim in ds.sizes
         ]
-        shape_lbl = QLabel("Stack: " + "  ".join(_shape_parts))
+        shape_lbl = QLabel("Dataset = " + "  ".join(_shape_parts))
         shape_lbl.setStyleSheet(S.STATUS)
         shape_lbl.setWordWrap(True)
         el.addWidget(shape_lbl)
@@ -473,9 +472,9 @@ class FlimViewPanel(QWidget):
             flim_mode = show_i and show_l
             self.int_colormap.setEnabled(not flim_mode)
             cmap = (
-                cm.gray
+                colormaps["gray"]
                 if flim_mode
-                else cm.get_cmap(self.int_colormap.currentText())
+                else colormaps[self.int_colormap.currentText()]
             )
             self.intensity_slider.set_colormap(cmap)
 
@@ -718,13 +717,13 @@ class FlimViewPanel(QWidget):
             try:
                 if has_intensity:
                     self.intensity_slider.set_colormap(
-                        cm.get_cmap(self.int_colormap.currentText())
+                        colormaps[self.int_colormap.currentText()]
                     )
                     if "Intensity" in self.viewer.layers:
                         self.viewer.layers["Intensity"].colormap = _int_cmap()
                 if has_lifetime:
                     self.lifetime_slider.set_colormap(
-                        cm.get_cmap(self.lt_colormap.currentText())
+                        colormaps[self.lt_colormap.currentText()]
                     )
                     # LUT still drives the RGB export + "→ RGB FLIM layer".
                     self._lut = _make_lut(self.lt_colormap.currentText())
@@ -783,11 +782,15 @@ class FlimViewPanel(QWidget):
         # ---- wire signals ----
         # Spinboxes → debounce → _slice (sticky contrast on navigation)
         # Agg checkboxes → _reset_and_slice (contrast resets when aggregation changes)
+        # The view label is pure string formatting, so it updates immediately
+        # rather than waiting on the slice debounce.
         for w in self.selectors.values():
             if isinstance(w, QSpinBox):
                 w.valueChanged.connect(self._debounce.start)
+                w.valueChanged.connect(self._update_view_label)
             if isinstance(w, QCheckBox):
                 w.toggled.connect(_reset_and_slice)
+                w.toggled.connect(self._update_view_label)
         self._debounce.timeout.connect(_slice)
 
         self.smooth_int_check.toggled.connect(_reset_and_slice)
@@ -816,6 +819,31 @@ class FlimViewPanel(QWidget):
         )
         _slice()
         _update_colormaps()
+        self._update_view_label()
+
+    def _update_view_label(self):
+        """Refresh the current-view line, e.g. ``View:  f0  s0  d1  l  p``.
+
+        One token per dimension: the selected index, or ``A`` when that
+        dimension is summed. The spatial axes carry no index — they are always
+        shown whole.
+        """
+        ds = self.dataset
+        if ds is None or not self.selectors:
+            return
+        parts = []
+        for dim, letter in (
+            ("frame", "F"),
+            ("sequence", "S"),
+            ("channel", "D"),
+        ):
+            if dim not in ds.sizes:
+                continue
+            if self.selectors[f"sum_{dim}s"].isChecked():
+                parts.append(f"{letter}: ∑")
+            else:
+                parts.append(f"{letter}: {self.selectors[dim].value()}")
+        self._view_lbl.setText("Current view =  " + "  ".join(parts))
 
     # ------------------------------------------------------------------ #
     # Export                                                               #
@@ -831,15 +859,6 @@ class FlimViewPanel(QWidget):
         if not (do_int or do_lt or do_flim):
             return
 
-        is_stack = self._exp_mode_grp.checkedId() == 1
-        if is_stack:
-            QMessageBox.information(
-                self,
-                "Not yet implemented",
-                "Stack export is not yet implemented.",
-            )
-            return
-
         stem = Path(self.dataset.attrs.get("source_filename", "export")).stem
         path_str, _ = QFileDialog.getSaveFileName(
             self, "Save — choose base name and location", stem, "All Files (*)"
@@ -847,9 +866,10 @@ class FlimViewPanel(QWidget):
         if not path_str:
             return
 
-        base = Path(path_str).with_suffix(
-            ""
-        )  # strip any extension the user typed
+        # Taken literally — whatever was typed is the base name, so a dot in it
+        # survives ("scan_44.56"). Type an extension and you get it twice; the
+        # per-type suffix below is always appended.
+        base = Path(path_str)
         try:
             if do_int:
                 self._save_intensity(base.parent / (base.name + "_int.tif"))
@@ -934,13 +954,9 @@ class FlimViewPanel(QWidget):
 
     def _flim_export_info(self) -> str:
         """Human-readable mapping baked into the FLIM RGB (for the sidecar)."""
-        lt_lo, lt_hi = self.lifetime_slider.value()
-        int_lo, int_hi = self.intensity_slider.value()
-        unit = getattr(self, "_lifetime_unit", "ch")
-        return (
-            "FLIM RGB export\n"
-            f"lifetime colormap : {self.lt_colormap.currentText()}\n"
-            f"lifetime range    : {lt_lo:.4g} .. {lt_hi:.4g} {unit}\n"
-            f"intensity range   : {int_lo:.4g} .. {int_hi:.4g} "
-            "photon counts (normalised 0..1 into this range)\n"
+        return flim_export_info(
+            self.lt_colormap.currentText(),
+            self.lifetime_slider.value(),
+            self.intensity_slider.value(),
+            getattr(self, "_lifetime_unit", "ch"),
         )

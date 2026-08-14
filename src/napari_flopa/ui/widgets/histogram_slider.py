@@ -8,7 +8,7 @@ The histogram canvas shows two overlaid range indicators:
 """
 
 import numpy as np
-from matplotlib import cm
+from matplotlib import colormaps
 from qtpy.QtCore import QRect, Qt, Signal
 from qtpy.QtGui import QColor, QPainter, QPen
 from qtpy.QtWidgets import (
@@ -42,8 +42,8 @@ class _HistogramCanvas(QWidget):
         self._mask_lo = 0.0
         self._mask_hi = 1.0
 
-        self._colormap = cm.gray
-        self._lut = self._make_lut(cm.gray)
+        self._colormap = colormaps["gray"]
+        self._lut = self._make_lut(colormaps["gray"])
         self._name = ""
 
     @staticmethod

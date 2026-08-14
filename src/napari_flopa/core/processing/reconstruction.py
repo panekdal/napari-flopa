@@ -14,9 +14,9 @@ MIN_CHUNK_SIZE = 100_000
 def reconstruct_ptu_to_dataset(
     ptu_data: dict,
     scan_config: ScanConfig,
-    outputs: list = None,
-    tcspc_channels_override: int = None,
-    logger: ProgressLogger = None,
+    outputs: list | None = None,
+    tcspc_channels_override: int | None = None,
+    logger: ProgressLogger | None = None,
     progress_callback=None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> xr.Dataset:

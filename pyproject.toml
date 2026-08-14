@@ -31,7 +31,7 @@ dependencies = [
     "qtpy",
     "xarray",
     "scipy",
-    "matplotlib<3.11",
+    "matplotlib>3.6",
     "superqt",
     "tttrkit",
 ]

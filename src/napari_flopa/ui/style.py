@@ -73,8 +73,8 @@ class C:  # "Color" — raw hex colour tokens
     DANGER_DARK = "#6b4a4e"
     DANGER_BG_DIS = "#2a1e21"
 
-    # Accent — green (succeS / done)
-    SUCCES = "#4edbdb"
+    # Accent — (execute / done)
+    SUCCES = "#ecff40"
     SUCCES_BG = "#264242"
 
     # Accent — amber (warning / secondary title)
@@ -83,7 +83,7 @@ class C:  # "Color" — raw hex colour tokens
     TITLE_PLAIN = "#c8ccd2"  # GROUP_PRIMARY #plain variant (light gray)
     TITLE_NESTED = "#c9a24a"  # GROUP_NESTED title (amber)
 
-    # Stale indicator (aligned to danger / succeS)
+    # Stale indicator (aligned to danger / success)
     STALE_INACTIVE = "#565e68"
     STALE_STALE = "#e05656"
     STALE_FRESH = "#5fbf74"
@@ -116,7 +116,7 @@ class S:  # "Style" — Qt stylesheet strings
     }
 
     # Status line levels — see ui/widgets/status_label.py (StatusLabel)
-    STATUS = f"color: {C.TEXT_DIM}; font-size: 10px;"
+    STATUS = f"color: {C.TEXT_DIM}; font-size: 11px;"
     STATUS_WARN = f"color: {C.WARNING}; font-size: 10px;"
     STATUS_ERROR = f"color: {C.DANGER_TEXT}; font-size: 10px;"
     HINT = f"color: {C.TEXT_FAINT}; font-size: 9px; font-weight: normal;"
@@ -143,16 +143,17 @@ class S:  # "Style" — Qt stylesheet strings
 
     BTN_SUCCESS = f"QPushButton {{ color: {C.SUCCES}; }}"
 
-    BTN_RUN = (
-        f"QPushButton {{ background: {C.SUCCES_BG}; color: {C.SUCCES}; "
-        f"font-weight: bold; padding: 3px 12px; }}"
-    )
+    # Colour only, so napari's own button styling stays in charge. Its rules
+    # set `background-color` for the normal / :hover / :pressed / :checked
+    # states and never set `color` outside :disabled — so overriding just the
+    # text colour conflicts with nothing, and hover, press and the greyed-out
+    # disabled look all keep working. Set `background` here instead (as
+    # BTN_STOP and BTN_DET_ON do) and the widget rule outranks napari's,
+    # killing the hover highlight unless every state is re-declared.
+    BTN_RUN = f"QPushButton {{ color: {C.SUCCES}; min-width: 50px;}}"
 
-    BTN_STOP = (
-        f"QPushButton {{ background: {C.DANGER_BG}; color: {C.DANGER_SOFT}; "
-        f"font-weight: bold; padding: 3px 12px; }}"
-        f"QPushButton:disabled {{ background: {C.DANGER_BG_DIS}; color: {C.DANGER_DARK}; }}"
-    )
+    # Colour only, same reasoning as BTN_RUN above.
+    BTN_STOP = f"QPushButton {{ color: {C.DANGER_TEXT}; min-width: 50px;}}"
 
     BTN_SMALL = "font-size: 10px;"
 
@@ -222,6 +223,18 @@ class S:  # "Style" — Qt stylesheet strings
         font-size: 12pt;
         font-weight: bold;
         color: {C.TITLE_PLAIN};
+    }}
+    """
+
+    # Titleless container — same surface as GROUP_PRIMARY so it lines up with
+    # the titled sections above it, minus the top margin those reserve for
+    # their title text (nothing to reserve here).
+    GROUP_PLAIN = f"""
+    QGroupBox {{
+        margin-top: 0px;
+        border: 1px {C.TITLE};
+        border-radius: 0px;
+        background-color: {C.BG_DARK};
     }}
     """
 

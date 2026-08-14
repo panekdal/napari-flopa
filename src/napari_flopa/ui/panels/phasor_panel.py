@@ -71,6 +71,10 @@ except ImportError:
         FigureCanvasQTAgg as FigureCanvas,
     )
 
+from napari_flopa.core.processing.phasor import (
+    calibration_factor,
+    lifetime_ticks,
+)
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
 from napari_flopa.ui.widgets.status_label import StatusLabel
@@ -139,6 +143,7 @@ class PhasorPanel(QWidget):
         # ── Toolbar ────────────────────────────────────────────────────
         tb = QHBoxLayout()
         self._plot_btn = QPushButton("Plot")
+        self._plot_btn.setStyleSheet(S.BTN_RUN)
         self._plot_btn.setEnabled(False)
         tb.addWidget(self._plot_btn)
 
@@ -168,15 +173,15 @@ class PhasorPanel(QWidget):
         self._roi_btn.toggled.connect(self._on_roi_toggled)
         self._roi_done_btn.clicked.connect(self._on_roi_done)
 
-        tb.addStretch()
+        tb.addSpacing(10)
+        # tb.addStretch()
 
         # Monoexponential-lifetime reference overlay — short label here (between
         # Plot and Save), full explanation in the tooltip.
         self._lifetimes_check = QCheckBox("τ marks")
         self._lifetimes_check.setToolTip(
-            "Overlay single-exponential lifetime reference marks on the "
-            "universal semicircle (…, 1 ns, 2 ns, 3 ns …) for the current "
-            "repetition rate, so apparent lifetimes can be read off the plot."
+            "Overlay mono-exponential lifetime reference marks on the "
+            "universal semicircle."
         )
         tb.addWidget(self._lifetimes_check)
         tb.addStretch()
@@ -222,16 +227,11 @@ class PhasorPanel(QWidget):
         self._pm_intensity = QRadioButton("Intensity α")
         self._pm_density = QRadioButton("Density")
         self._pm_scatter.setChecked(True)
-        self._pm_scatter.setToolTip(
-            "Scatter plot — each pixel as a point (white)"
-        )
+        self._pm_scatter.setToolTip("Scatter plot — each pixel as a point")
         self._pm_intensity.setToolTip(
-            "Scatter with alpha-channel weighted by photon count\n"
-            "(brighter = more photons, color stays the same)"
+            "Scatter with alpha-channel weighted by photon count"
         )
-        self._pm_density.setToolTip(
-            "2D histogram density (imshow / hexbin, uses Cmap)"
-        )
+        self._pm_density.setToolTip("2D histogram density ")
         for rb, mode_id in (
             (self._pm_scatter, self.PM_SCATTER),
             (self._pm_intensity, self.PM_INTENSITY),
@@ -355,10 +355,8 @@ class PhasorPanel(QWidget):
         cal_lay.addWidget(self._revert_btn)
         self._update_revert_tooltip()
 
-        unity_btn = QPushButton("1+0j")
-        unity_btn.setToolTip(
-            "Set the calibration factor to 1+0j (leaves the phasor unchanged)"
-        )
+        unity_btn = QPushButton("Reset")
+        unity_btn.setToolTip("Set the calibration factor to 1+0j")
         unity_btn.clicked.connect(self._reset_calib)
         cal_lay.addWidget(unity_btn)
 
@@ -495,7 +493,7 @@ class PhasorPanel(QWidget):
             if self._get_settings() != self._plotted_settings:
                 self._stale.setStyleSheet(S.STALE_STALE)
                 self._stale.setToolTip(
-                    "Settings or view have changed since the last plot — click Plot to refresh."
+                    "Settings changed since last plot — click Plot to refresh."
                 )
                 self._stale.setVisible(True)
 
@@ -562,6 +560,20 @@ class PhasorPanel(QWidget):
     # Calibration                                                          #
     # ------------------------------------------------------------------ #
 
+    def _f_rep_hz(self) -> float:
+        """Repetition rate the loaded dataset was reconstructed with, in Hz.
+
+        Always taken from the file header via ``instrument_params`` — the same
+        value that produced ``omega`` and therefore the phasor coordinates — so
+        the reference marks and the calibration describe the data on screen.
+        """
+        ds = self.state.dataset
+        if ds is not None:
+            rate = ds.attrs.get("instrument_params", {}).get("repetition_rate")
+            if rate:
+                return float(rate)
+        return float(self.state.frep_mhz) * 1e6
+
     def _on_calculate_cal_dialog(self):
         """Open dialog: user enters τ_ns + measured G, S → compute factor."""
         dlg = CalibrationDialog(
@@ -573,10 +585,9 @@ class PhasorPanel(QWidget):
         try:
             # Persist τ_ref for subsequent Auto calls
             self._tau_ref_spin.setValue(vals["tau_ns"])
-            f_rep_hz = self.state.frep_mhz * 1e6
             measured = complex(vals["g"], vals["s"])
-            self._calib_factor = _calc_calib_factor(
-                vals["tau_ns"], measured, f_rep_hz
+            self._calib_factor = calibration_factor(
+                vals["tau_ns"], measured, self._f_rep_hz()
             )
             self._calib_display.setText(self._fmt_complex(self._calib_factor))
             self.state.set_calib_factor(self._calib_factor)
@@ -912,7 +923,7 @@ class PhasorPanel(QWidget):
         # ── Draw ────────────────────────────────────────────────────────
         if per_object:
             self._roi_pixel_yx = None
-        sync_hz = ip.get("sync_rate_hz", None) or (self.state.frep_mhz * 1e6)
+        sync_hz = self._f_rep_hz()
         self._draw_phasor(
             np.array(g_out).ravel(),
             np.array(s_out).ravel(),
@@ -1728,21 +1739,6 @@ def _parse_settings(ds, settings: dict):
     return sel, dims_to_sum
 
 
-def _calc_calib_factor(
-    tau_ns: float, measured: complex, f_rep_hz: float
-) -> complex:
-    tau_s = tau_ns * 1e-9
-    omega = 2 * np.pi * f_rep_hz
-    g_th = 1.0 / (1.0 + (omega * tau_s) ** 2)
-    s_th = (omega * tau_s) / (1.0 + (omega * tau_s) ** 2)
-    theory = complex(g_th, s_th)
-    if abs(measured) < 1e-12:
-        raise ValueError(
-            "Measured phasor is zero — cannot compute calibration factor."
-        )
-    return theory / measured
-
-
 def _get_napari_color(layer, label_id: int) -> tuple:
     """Return (R, G, B, A) float 0-1 for label_id from a napari Labels layer."""
     try:
@@ -1753,14 +1749,10 @@ def _get_napari_color(layer, label_id: int) -> tuple:
 
 
 def _draw_lifetime_ticks(ax, sync_hz: float):
-    omega = 2 * np.pi * sync_hz
-    tau_max = max(1, int(np.ceil(0.5e9 / sync_hz)))
+    """Draw the monoexponential reference marks. Positions come from core."""
     center = np.array([0.5, 0.0])
     tick_len = 0.018
-    for tau_ns in range(1, tau_max + 1):
-        tau_s = tau_ns * 1e-9
-        g_t = 1.0 / (1.0 + (omega * tau_s) ** 2)
-        s_t = (omega * tau_s) / (1.0 + (omega * tau_s) ** 2)
+    for tau_ns, g_t, s_t in lifetime_ticks(sync_hz):
         p = np.array([g_t, s_t])
         v = p - center
         nrm = np.linalg.norm(v)

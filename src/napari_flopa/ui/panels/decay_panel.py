@@ -33,7 +33,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from matplotlib import cm as _mpl_cm
+from matplotlib import colormaps as _mpl_colormaps
 from matplotlib.figure import Figure
 from qtpy.QtCore import Qt, Signal, Slot
 from qtpy.QtWidgets import (
@@ -72,7 +72,7 @@ from napari_flopa.ui.widgets.status_label import StatusLabel
 def _build_palette() -> list:
     colours = []
     for cmap_name in ("tab20", "tab20b", "tab20c"):
-        cmap = _mpl_cm.get_cmap(cmap_name)
+        cmap = _mpl_colormaps[cmap_name]
         for i in range(20):
             r, g, b, _ = cmap(i / 20)
             colours.append(
@@ -128,17 +128,24 @@ class DecayPanel(QWidget):
         tb.setSpacing(4)
 
         self._plot_btn = QPushButton("Plot")
+        self._plot_btn.setStyleSheet(S.BTN_RUN)
         self._plot_btn.setEnabled(False)
         self._plot_btn.setToolTip(
             "Plot decay curves from the current dataset / aggregation settings"
         )
         tb.addWidget(self._plot_btn)
 
-        self._from_view_btn = QPushButton("From View")
+        self._stale = QLabel("●")
+        self._stale.setFixedWidth(14)
+        self._stale.setAlignment(Qt.AlignCenter)
+        self._stale.setStyleSheet(S.STALE_INACTIVE)
+        self._stale.setVisible(False)
+        tb.addWidget(self._stale)
+
+        self._from_view_btn = QPushButton("FLIM View")
         self._from_view_btn.setEnabled(False)
         self._from_view_btn.setToolTip(
-            "Copy aggregation from FLIM View and auto-hide curves not matching "
-            "the current frame/sequence/channel selection"
+            "Settings from FLIM View (only current selection)"
         )
         tb.addWidget(self._from_view_btn)
 
@@ -147,13 +154,6 @@ class DecayPanel(QWidget):
             "Reset to default: no aggregation, all curves visible"
         )
         tb.addWidget(self._default_btn)
-
-        self._stale = QLabel("●")
-        self._stale.setFixedWidth(14)
-        self._stale.setAlignment(Qt.AlignCenter)
-        self._stale.setStyleSheet(S.STALE_INACTIVE)
-        self._stale.setVisible(False)
-        tb.addWidget(self._stale)
 
         tb.addStretch()
 
@@ -218,9 +218,7 @@ class DecayPanel(QWidget):
         scale_lay.setContentsMargins(6, 2, 6, 2)
         self._log_check = QCheckBox("Log Y")
         self._log_check.setChecked(True)
-        self._log_check.setToolTip(
-            "Logarithmic Y axis (floor 1 count, or 1e-4 when normalised)"
-        )
+        self._log_check.setToolTip("Logarithmic Y axis")
         self._norm_check = QCheckBox("Norm")
         self._norm_check.setToolTip("Normalize each curve to its peak")
         scale_lay.addWidget(self._log_check)

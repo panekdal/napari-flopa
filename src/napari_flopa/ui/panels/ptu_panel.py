@@ -5,8 +5,6 @@ from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
 from matplotlib.figure import Figure
-from tttrkit.ptuio.reconstructor import ScanConfig
-from tttrkit.ptuio.utils import estimate_bidirectional_shift
 from qtpy.QtCore import Qt, QThreadPool, Signal, Slot
 from qtpy.QtWidgets import (
     QApplication,
@@ -29,6 +27,8 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from tttrkit.ptuio.reconstructor import ScanConfig
+from tttrkit.ptuio.utils import estimate_bidirectional_shift
 
 from napari_flopa.core import provenance
 from napari_flopa.core.demo import load_demo
@@ -194,16 +194,16 @@ class PtuPanel(QWidget):
         self.out_combo = QComboBox()
         self.out_combo.addItems(
             [
-                "Intensity (I)",
-                "I + τ",
+                "Intensity",
+                "Int. + τ",
                 "All",
             ]
         )
         self.out_combo.setCurrentIndex(2)
         self.out_combo.setToolTip(
             "Reconstruction outputs:\n"
-            "Intensity (I): photon-count image only\n"
-            "I + τ: intensity + mean arrival-time (lifetime)\n"
+            "Intensity: photon-count image only\n"
+            "Int. + τ: intensity + mean arrival-time (lifetime)\n"
             "All: also compute phasor coordinates + TCSPC decay"
         )
         # Without this the combo's minimum fits its longest item
@@ -229,12 +229,12 @@ class PtuPanel(QWidget):
             "TTTR records read per iteration "
             f"(default {DEFAULT_CHUNK_SIZE:,}).\n"
             "Smaller = less memory and finer progress steps; "
-            "larger = fewer iterations.\n"
-            "Does not change the reconstructed data."
+            "larger = fewer iterations."
         )
-        output_row.addWidget(self.chunk_size_spin, 1)
+        output_row.addWidget(self.chunk_size_spin, 2)
 
-        self.reconstruct_btn = QPushButton("Reconstruct")
+        self.reconstruct_btn = QPushButton("Run")
+        self.reconstruct_btn.setStyleSheet(S.BTN_RUN)
         self.reconstruct_btn.clicked.connect(self._run_reconstruction)
         output_row.addWidget(self.reconstruct_btn)
         recon_layout.addLayout(output_row)
@@ -322,19 +322,10 @@ class PtuPanel(QWidget):
             "Max detectors:", _spin_row("max_detector", self.max_detector_spin)
         )
 
-        # Rep. rate / N Sequences / Accumulations continue in the same column,
-        # directly under Max Det.
-        self.frep_spin = QDoubleSpinBox()
-        self.frep_spin.setRange(0.001, 500.0)
-        self.frep_spin.setValue(40.0)
-        self.frep_spin.setDecimals(3)
-        self.frep_spin.setToolTip(
-            "Laser/excitation repetition rate — auto-filled from file header.\n"
-            "Used for phasor calibration and lifetime calculation."
-        )
-        self.frep_spin.valueChanged.connect(lambda v: self.state.set_frep(v))
-        form.addRow("Rep. rate (MHz):", _spin_row("frep", self.frep_spin))
-
+        # N Sequences / Accumulations continue in the same column, directly
+        # under Max Det. (The repetition rate is not editable: it is header
+        # metadata that reconstruction reads straight from the file, so an
+        # editable copy could only ever disagree with the data.)
         self.sequences_spin = QSpinBox()
         self.sequences_spin.setRange(1, 16)
         self.sequences_spin.setValue(1)
@@ -390,7 +381,7 @@ class PtuPanel(QWidget):
         # bidir_layout.addStretch()
 
         # Compact Est./Plot buttons, matched to the same small height.
-        self.estimate_btn = QPushButton("Est.")
+        self.estimate_btn = QPushButton("Estimate")
         self.estimate_btn.setToolTip("Estimate bidirectional phase shift")
         self.estimate_btn.setFixedHeight(22)
         self.estimate_btn.setStyleSheet(S.BTN_SMALL)
@@ -500,14 +491,6 @@ class PtuPanel(QWidget):
             self._set_param_source(
                 "tcspc_bins", csrc.get("tcspc_bins", provenance.DEFAULT)
             )
-            rep = constants.get("repetition_rate") or constants.get(
-                "sync_rate_hz"
-            )
-            if rep:
-                self.frep_spin.setValue(float(rep) / 1e6)
-                self._set_param_source(
-                    "frep", csrc.get("repetition_rate", provenance.DEFAULT)
-                )
             self._autofill = False
 
             self.header_group.setVisible(True)
@@ -554,14 +537,6 @@ class PtuPanel(QWidget):
             self._set_param_source(
                 "tcspc_bins", csrc.get("tcspc_bins", provenance.DEFAULT)
             )
-            rep = constants.get("repetition_rate") or constants.get(
-                "sync_rate_hz"
-            )
-            if rep:
-                self.frep_spin.setValue(float(rep) / 1e6)
-                self._set_param_source(
-                    "frep", csrc.get("repetition_rate", provenance.DEFAULT)
-                )
             self._autofill = False
 
             self.header_group.setVisible(True)
@@ -772,7 +747,6 @@ class PtuPanel(QWidget):
             tcspc_bins=self.tcspc_bins_spin.value(),
             bidirectional=self.bidir_group.isChecked(),
             bidirectional_phase_shift=self.bidir_phase_spin.value(),
-            f_rep_mhz=float(self.frep_spin.value()),
             factor=_fmt_factor(self.state.calib_factor),
             ptu_filename=(
                 self.ptu_filepath.name if self.ptu_filepath else None
@@ -829,9 +803,8 @@ class PtuPanel(QWidget):
                 self.bidir_phase_spin.setValue(
                     float(scan["bidirectional_phase_shift"])
                 )
-            if "f_rep_mhz" in cal:
-                self.frep_spin.setValue(float(cal["f_rep_mhz"]))
-                applied.append("frep")
+            # A legacy `f_rep_mhz` is ignored on purpose: the repetition rate
+            # comes from the file header, never from a config.
             # No widget for the factor here — it is handed to the Phasor tab
             # (via the shared state) once reconstruction finishes.
             if cal.get("factor"):

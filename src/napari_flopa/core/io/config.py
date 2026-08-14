@@ -13,8 +13,11 @@ Schema::
                                       #   have no such field (e.g. Batch)
         "bidirectional", "bidirectional_phase_shift"
       },
-      "calibration": {"f_rep_mhz", "factor": "1+0j"}
+      "calibration": {"factor": "1+0j"}
     }
+
+Configs written before the repetition rate became header-only may still carry
+``calibration.f_rep_mhz``; readers ignore it.
 """
 
 import json
@@ -30,7 +33,6 @@ def build_scan_config_dict(
     max_detector,
     bidirectional,
     bidirectional_phase_shift,
-    f_rep_mhz,
     tcspc_bins=None,
     factor="1+0j",
     ptu_filename=None,
@@ -54,7 +56,6 @@ def build_scan_config_dict(
             ),
         },
         "calibration": {
-            "f_rep_mhz": float(f_rep_mhz),
             "factor": str(factor),
         },
     }

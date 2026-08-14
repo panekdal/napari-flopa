@@ -134,16 +134,69 @@ def aggregate_dataset(ds: xr.Dataset, dims) -> xr.Dataset:
     return xr.merge([out_ds, coord_ds], compat="override")
 
 
+#: Colormaps offered wherever the UI lets one be picked (matplotlib names).
+#: Kept here, next to `colormap_to_lut`, so the FLIM View and Batch tabs cannot
+#: drift apart on what is selectable.
+LIFETIME_COLORMAPS = ("rainbow", "hsv", "viridis", "magma", "cividis")
+INTENSITY_COLORMAPS = ("gray", "viridis", "magma", "hot", "cividis")
+
+
 def colormap_to_lut(cmap_name: str, n: int = 256) -> NDArray[np.uint8]:
     """Build an (n, 3) uint8 RGB lookup table from a matplotlib colormap name.
 
     Pre-building the LUT once lets `flim_rgb` recolour interactively (a uint8
     index lookup) instead of evaluating the colormap on every slider move.
     """
-    from matplotlib import cm
+    # `matplotlib.colormaps[name]` is the registry lookup that replaced
+    # `cm.get_cmap()` (deprecated in 3.7, removed in 3.11).
+    from matplotlib import colormaps
 
-    cmap = cm.get_cmap(cmap_name)
+    cmap = colormaps[cmap_name]
     return (cmap(np.linspace(0, 1, n))[:, :3] * 255).astype(np.uint8)
+
+
+def flim_export_info(
+    cmap: str,
+    lt_range: tuple[float, float],
+    int_range: tuple[float, float],
+    unit: str = "ch",
+) -> str:
+    """Sidecar text describing how a FLIM RGB image was composited.
+
+    An exported RGB is not quantitative on its own — these are the numbers
+    needed to read it back. Shared by the interactive and batch exports so the
+    two sidecars stay comparable.
+    """
+    lt_lo, lt_hi = lt_range
+    int_lo, int_hi = int_range
+    return (
+        "FLIM RGB export\n"
+        f"lifetime colormap : {cmap}\n"
+        f"lifetime range    : {lt_lo:.4g} .. {lt_hi:.4g} {unit}\n"
+        f"intensity range   : {int_lo:.4g} .. {int_hi:.4g} photon counts\n"
+    )
+
+
+def auto_range(
+    values: NDArray[np.floating], mode: str = "minmax"
+) -> tuple[float, float]:
+    """Display range derived from the data itself, ignoring NaN/Inf.
+
+    ``minmax`` uses the extremes of *values*; ``p2p98`` the 2nd/98th
+    percentiles. The mode argument exists so callers can offer more options
+    later without changing their call sites. Falls back to ``(0.0, 1.0)`` when
+    nothing is finite.
+    """
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0.0, 1.0
+    if mode == "p2p98":
+        lo, hi = np.percentile(finite, [2, 98])
+    elif mode == "minmax":
+        lo, hi = finite.min(), finite.max()
+    else:
+        raise ValueError(f"Unknown auto-range mode: {mode!r}")
+    return float(lo), float(hi)
 
 
 def flim_rgb(
