@@ -700,7 +700,7 @@ class PhasorPanel(QWidget):
                 k % 2 == 0
             ):  # tttrkit smooth_phasor shifts ½px with even kernels
                 k += 1
-            from tttrkit.ptuio.utils import smooth_phasor
+            from tttrkit.analysis.phasor import smooth_phasor
 
             phasor_c_smooth = smooth_phasor(
                 phasor_g + 1j * phasor_s,
@@ -759,7 +759,7 @@ class PhasorPanel(QWidget):
         ) = ([], [], [], [], [], [], [])
 
         if per_object:
-            from tttrkit.ptuio.utils import average_phasor
+            from tttrkit.analysis.phasor import average_phasor
 
             phasor_c = phasor_g + 1j * phasor_s
             pc_arr = (

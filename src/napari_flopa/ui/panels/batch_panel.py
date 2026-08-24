@@ -909,7 +909,7 @@ class _BatchWorker(QObject):
 
             smoothed = False
             if smooth and g2d.ndim == 2 and pc2d is not None:
-                from tttrkit.ptuio.utils import smooth_phasor
+                from tttrkit.analysis.phasor import smooth_phasor
 
                 k = smooth_k + 1 if smooth_k % 2 == 0 else smooth_k
                 phasor_c = smooth_phasor(

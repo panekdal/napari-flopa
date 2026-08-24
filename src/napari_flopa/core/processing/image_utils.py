@@ -19,7 +19,7 @@ def smooth_weighted(
     set to NaN.
 
     Intended for scalar fields such as mean_arrival_time.  Do NOT use this
-    for phasor data — use ptuio.utils.smooth_phasor instead, which operates
+    for phasor data — use smooth_phasor from tttrkit.analysis.phasor instead, which operates
     on the complex g+i·s representation directly and handles both components
     in a single pass.
     """
