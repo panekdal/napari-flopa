@@ -83,6 +83,19 @@ class C:  # "Color" — raw hex colour tokens
     TITLE_PLAIN = "#c8ccd2"  # GROUP_PRIMARY #plain variant (light gray)
     TITLE_NESTED = "#c9a24a"  # GROUP_NESTED title (amber)
 
+    # Accent - pink/purple
+    PINK_LINE = "#FC24DF"
+
+    # Categorical series palette (Okabe–Ito, colour-blind safe) — one entry per
+    # detector in the trace plot; cycles if there are more series than colours.
+    SERIES = (
+        "#0072B2",
+        "#D55E00",
+        "#009E73",
+        "#CC79A7",
+        "#E69F00",
+    )
+
     # Stale indicator
     STALE_INACTIVE = "#565e68"
     STALE_STALE = "#e05656"
@@ -302,15 +315,29 @@ def apply_style(widget, style_string: str) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Matplotlib theme
+# Plot theme
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-class MPL:  # "Plot" — matplotlib colour values
-    """Colour values for matplotlib figure/axes styling (not Qt stylesheets)."""
+class MPL:  # "Plot"
+    """Colour values for figure/axes styling (not Qt stylesheets)."""
 
     FIG_BG = C.BG_DARK  # figure.facecolor
     AXES_BG = C.BG_MID  # axes.facecolor
     TICK = C.TEXT  # tick label colour
     SPINE = C.TEXT_DARK  # axes spine colour
     GRID = "#333842"  # grid line colour
+
+    # Dragged-range overlay in the trace plot
+    SELECTION = C.TITLE
+    SELECTION_FILL_ALPHA = 30
+    SELECTION_EDGE_ALPHA = 160
+
+    # Marker overlays in the trace plot.
+    MARKER_LINE_START = C.STALE_FRESH
+    MARKER_LINE_STOP = C.STALE_STALE
+    MARKER_FRAME = C.PINK_LINE
+
+    # Plate behind legend text.
+    LEGEND_BG = C.BG_DARK
+    LEGEND_BG_ALPHA = 245
