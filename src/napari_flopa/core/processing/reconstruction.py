@@ -59,7 +59,7 @@ def reconstruct_ptu_to_dataset(
     recon = ImageReconstructor(
         config=scan_config,
         outputs=requested_outputs,
-        omega=constants["omega"],
+        laser_sync_rate=constants["repetition_rate"],
         tcspc_channels=tcspc_channels,
     )
 
