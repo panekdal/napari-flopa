@@ -27,6 +27,11 @@ class FlopaState(QObject):
         self.frep_mhz: float = 40.0
         self.calib_factor: complex = 1.0 + 0j
         self.file_config_provider = None
+        # Pull, like file_config_provider: returns the File tab's live
+        # {"ptu_path": Path | None, "chunk_size": int}. The path and the chunk
+        # size are not part of the saved scan config, but other tabs still need
+        # to read the same file the same way.
+        self.file_runtime_provider = None
 
     # Setters
 
@@ -52,6 +57,15 @@ class FlopaState(QObject):
         if self.file_config_provider is None:
             return None
         return self.file_config_provider()
+
+    def file_runtime(self) -> dict:
+        """The File tab's current PTU path and chunk size.
+
+        Always a dict; ``ptu_path`` is None until a file has been read.
+        """
+        if self.file_runtime_provider is None:
+            return {"ptu_path": None, "chunk_size": 0}
+        return self.file_runtime_provider()
 
     def notify_file_loaded(self):
         """Called by PtuPanel once a PTU header has been read."""

@@ -56,7 +56,8 @@ from qtpy.QtWidgets import (
 )
 
 from napari_flopa.core.io.config import (
-    build_scan_config_dict,
+    DEFAULT_LASER_DUTY,
+    ScanSettings,
     load_config,
     save_config,
 )
@@ -172,6 +173,18 @@ def _needed_outputs(p: dict) -> list[str] | None:
     if any(c.get("export_int") for c in img):
         return ["photon_count"]
     return None
+
+
+def _follow_checkbox(checkbox: QCheckBox, *widgets: QWidget):
+    """Enable *widgets* only while *checkbox* is ticked.
+
+    Labels are included on purpose: Qt dims a disabled widget's own text, so a
+    field greys out but its caption would stay bright and the row would read as
+    half-active. Applies the current state immediately.
+    """
+    for widget in widgets:
+        widget.setEnabled(checkbox.isChecked())
+        checkbox.toggled.connect(widget.setEnabled)
 
 
 def _first_set(typed, derived) -> float:
@@ -688,7 +701,7 @@ class _BatchWorker(QObject):
         if p.get("tcspc_bins"):
             constants["tcspc_bins"] = p["tcspc_bins"]
         ds.attrs["instrument_params"] = constants
-        ds.attrs["scan_config"] = p["scan_config"].to_dict()
+        ds.attrs["scan_config"] = p.get("scan_config_dict") or {}
         ds.attrs["source_filename"] = ptu_path.name
 
         # Apply calibration factor
@@ -1297,7 +1310,7 @@ class BatchPanel(QWidget):
         )
 
         # Bidirectional row
-        self._c_bidir = QCheckBox("Bidirectional scan")
+        self._c_bidir = QCheckBox("Bidirectional")
         self._c_bidir.setStyleSheet("font-weight: normal;")
         self._c_bidir.setToolTip("Enable bidirectional scan correction")
         self._c_bidir_shift = QLineEdit("0.0")
@@ -1306,13 +1319,53 @@ class BatchPanel(QWidget):
         self._c_bidir_shift.setToolTip(
             "Phase shift for bidirectional correction (pixels, −0.2 … 0.2)"
         )
-        self._c_bidir_shift.setEnabled(False)
-        self._c_bidir.toggled.connect(self._c_bidir_shift.setEnabled)
         bidir_lbl = QLabel("Phase shift:")
         bidir_lbl.setStyleSheet("font-weight: normal;")
+        # The label follows its field, so an unticked mode greys out as a
+        # whole — the same cue a checkable section gives its contents.
+        _follow_checkbox(self._c_bidir, self._c_bidir_shift, bidir_lbl)
         cg.addWidget(self._c_bidir, 3, 0, 1, 2)
         cg.addWidget(bidir_lbl, 3, 2)
         cg.addWidget(self._c_bidir_shift, 3, 3, 1, 3)
+
+        # Harmonic (resonant) scan row — same pattern as bidirectional above.
+        self._c_harmonic = QCheckBox("Harmonic")
+        self._c_harmonic.setStyleSheet("font-weight: normal;")
+        self._c_harmonic.setToolTip("Enable harmonic (resonant) scan handling")
+        self._c_laser_duty = QLineEdit(str(DEFAULT_LASER_DUTY))
+        self._c_laser_duty.setValidator(QDoubleValidator(0.0, 1.0, 4))
+        self._c_laser_duty.setToolTip(
+            "Fraction of the line period the laser is on"
+        )
+        self._c_line_start_delay = QLineEdit("0.0")
+        self._c_line_stop_delay = QLineEdit("0.0")
+        for edit, edge in (
+            (self._c_line_start_delay, "start"),
+            (self._c_line_stop_delay, "stop"),
+        ):
+            edit.setValidator(QDoubleValidator(-0.5, 0.5, 6))
+            edit.setToolTip(
+                f"Shift the {edge} edge of each reconstructed line "
+                "(fraction of a line duration)"
+            )
+        duty_lbl = QLabel("Laser duty:")
+        duty_lbl.setStyleSheet("font-weight: normal;")
+        delay_lbl = QLabel("Line Δ start/stop:")
+        delay_lbl.setStyleSheet("font-weight: normal;")
+        _follow_checkbox(
+            self._c_harmonic,
+            duty_lbl,
+            self._c_laser_duty,
+            delay_lbl,
+            self._c_line_start_delay,
+            self._c_line_stop_delay,
+        )
+        cg.addWidget(self._c_harmonic, 4, 0)
+        cg.addWidget(duty_lbl, 4, 1)
+        cg.addWidget(self._c_laser_duty, 4, 2)
+        cg.addWidget(delay_lbl, 4, 3)
+        cg.addWidget(self._c_line_start_delay, 4, 4)
+        cg.addWidget(self._c_line_stop_delay, 4, 5)
 
         self._cal_factor = QLineEdit("1+0j")
         self._cal_factor.setValidator(
@@ -1344,8 +1397,8 @@ class BatchPanel(QWidget):
         cg.addWidget(QLabel("Calibration:"), 2, 2)
         cg.addWidget(self._cal_factor, 2, 3, 1, 3)
 
-        cg.addWidget(QLabel("Chunk size:"), 4, 0)
-        cg.addWidget(self._c_chunk, 4, 1, 1, 3)
+        cg.addWidget(QLabel("Chunk size:"), 5, 0)
+        cg.addWidget(self._c_chunk, 5, 1, 1, 3)
 
         cfg_vlay.addLayout(cg)
 
@@ -1564,26 +1617,47 @@ class BatchPanel(QWidget):
             f"Provide 1 value (applied to all) or exactly {n_seqs} values."
         )
 
+    def current_settings(self, *, strict: bool = False) -> ScanSettings:
+        """Read every scan widget — the panel's single source of truth.
+
+        The JSON config, the tttrkit ScanConfig and the dataset attribute are
+        all derived from this. With *strict* the accumulation count must match
+        the sequence count, which is required before a run but not for saving
+        a half-edited config.
+        """
+
+        def _num(edit, cast, default):
+            txt = edit.text().strip()
+            try:
+                return cast(txt) if txt else default
+            except ValueError:
+                return default
+
+        n_seqs = _num(self._c_seqs, int, 1)
+        return ScanSettings(
+            frames=_num(self._c_frames, int, 1),
+            lines=_num(self._c_lines, int, 256),
+            pixels=_num(self._c_pixels, int, 256),
+            accumulations=tuple(self._accum_list(n_seqs, strict=strict)),
+            max_detector=_num(self._c_maxdet, int, 4),
+            bidirectional=self._c_bidir.isChecked(),
+            bidirectional_phase_shift=_num(self._c_bidir_shift, float, 0.0),
+            harmonic_scan=self._c_harmonic.isChecked(),
+            laser_duty=_num(self._c_laser_duty, float, DEFAULT_LASER_DUTY),
+            line_start_marker_delay=_num(self._c_line_start_delay, float, 0.0),
+            line_stop_marker_delay=_num(self._c_line_stop_delay, float, 0.0),
+            tcspc_bins=_num(self._c_tcspc, int, 4096),
+            calib_factor=self._cal_factor.text().strip() or "1+0j",
+        )
+
     def _config_dict(self) -> dict:
-        """Collect scan config + calibration in the shared core JSON schema.
+        """Scan config + calibration in the shared core JSON schema.
 
         Same schema the File tab reads and writes, so configs move between the
         two tabs unchanged. Chunk size is deliberately not stored — it is a
         machine-local speed knob, not part of the scan description.
         """
-        n_seqs = int(self._c_seqs.text() or 1)
-        return build_scan_config_dict(
-            frames=int(self._c_frames.text() or 1),
-            lines=int(self._c_lines.text() or 256),
-            pixels=int(self._c_pixels.text() or 256),
-            sequences=n_seqs,
-            accumulations=self._accum_list(n_seqs, strict=False),
-            max_detector=int(self._c_maxdet.text() or 4),
-            tcspc_bins=int(self._c_tcspc.text() or 4096),
-            bidirectional=self._c_bidir.isChecked(),
-            bidirectional_phase_shift=float(self._c_bidir_shift.text() or 0.0),
-            factor=self._cal_factor.text().strip() or "1+0j",
-        )
+        return self.current_settings().to_json_dict()
 
     def _apply_dict(self, cfg: dict):
         """Push a config dict back into the UI.
@@ -1616,8 +1690,16 @@ class BatchPanel(QWidget):
 
         if "bidirectional" in s:
             self._c_bidir.setChecked(bool(s["bidirectional"]))
-        if "bidirectional_phase_shift" in s:
-            self._c_bidir_shift.setText(str(s["bidirectional_phase_shift"]))
+        if "harmonic_scan" in s:
+            self._c_harmonic.setChecked(bool(s["harmonic_scan"]))
+        for key, edit in (
+            ("bidirectional_phase_shift", self._c_bidir_shift),
+            ("laser_duty", self._c_laser_duty),
+            ("line_start_marker_delay", self._c_line_start_delay),
+            ("line_stop_marker_delay", self._c_line_stop_delay),
+        ):
+            if key in s:
+                edit.setText(str(s[key]))
 
         c = cfg.get("calibration") or {}
         if c.get("factor"):
@@ -1650,38 +1732,8 @@ class BatchPanel(QWidget):
     # ── run ──────────────────────────────────────────────────────────────
 
     def _build_scan_config(self):
-        """Build a ScanConfig from the UI fields."""
-        from tttrkit.ptuio.reconstructor import ScanConfig
-
-        def _int(edit: QLineEdit, name: str, default: int = 1) -> int:
-            txt = edit.text().strip()
-            try:
-                return int(txt) if txt else default
-            except ValueError:
-                raise ValueError(
-                    f"{name}: expected integer, got {txt!r}"
-                ) from None
-
-        n_seqs = _int(self._c_seqs, "N seqs", 1)
-        line_accumulations = tuple(self._accum_list(n_seqs, strict=True))
-
-        try:
-            bidir_shift = float(self._c_bidir_shift.text() or 0.0)
-        except ValueError:
-            bidir_shift = 0.0
-
-        return ScanConfig(
-            frames=_int(self._c_frames, "Frames"),
-            pixels=_int(self._c_pixels, "Pixels"),
-            lines=_int(self._c_lines, "Lines"),
-            max_detector=_int(self._c_maxdet, "Max detector", 4),
-            line_accumulations=line_accumulations,
-            bidirectional=self._c_bidir.isChecked(),
-            bidirectional_phase_shift=bidir_shift,
-            frame_start_marker_channel=4,
-            line_start_marker_channel=1,
-            line_stop_marker_channel=2,
-        )
+        """Build a ScanConfig from the UI fields, validating accumulations."""
+        return self.current_settings(strict=True).to_scan_config()
 
     def _cal_complex(self) -> complex:
         """Parse the calibration factor field."""
@@ -1709,7 +1761,8 @@ class BatchPanel(QWidget):
             return
 
         try:
-            scan_cfg = self._build_scan_config()
+            settings = self.current_settings(strict=True)
+            scan_cfg = settings.to_scan_config()
             cal = self._cal_complex()
         except Exception as e:
             self._log_line(f"Config error: {e}", error=True)
@@ -1725,6 +1778,7 @@ class BatchPanel(QWidget):
             lbl_dir=self._lbl_edit.text().strip() or None,
             recursive=self._recursive_chk.isChecked(),
             scan_config=scan_cfg,
+            scan_config_dict=settings.to_json_dict()["scan"],
             tcspc_bins=int(self._c_tcspc.text() or 0) or None,
             chunk_size=self._c_chunk.value(),
             cal_real=cal.real,

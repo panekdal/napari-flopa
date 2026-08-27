@@ -33,7 +33,8 @@ from tttrkit.ptuio.utils import estimate_bidirectional_shift
 from napari_flopa.core import provenance
 from napari_flopa.core.demo import load_demo
 from napari_flopa.core.io.config import (
-    build_scan_config_dict,
+    DEFAULT_LASER_DUTY,
+    ScanSettings,
     load_config,
     save_config,
 )
@@ -99,6 +100,10 @@ class PtuPanel(QWidget):
         self._build_ui()
         # Let other tabs (Batch) pull these fields without a reconstruction.
         self.state.file_config_provider = self._file_config_or_none
+        self.state.file_runtime_provider = lambda: {
+            "ptu_path": self.ptu_filepath,
+            "chunk_size": self.chunk_size_spin.value(),
+        }
 
     # ------------------------------------------------------------------ #
     # Parameter provenance                                                 #
@@ -377,7 +382,7 @@ class PtuPanel(QWidget):
         self.bidir_phase_spin.setDecimals(5)
         self.bidir_phase_spin.setValue(0.0)
         # self.bidir_phase_spin.setMinimumWidth(70)
-        bidir_layout.addWidget(self.bidir_phase_spin)
+        bidir_layout.addWidget(self.bidir_phase_spin, 1)
         # bidir_layout.addStretch()
 
         # Compact Est./Plot buttons, matched to the same small height.
@@ -399,7 +404,59 @@ class PtuPanel(QWidget):
 
         main_layout.addWidget(self.bidir_group)
 
-        # --- Load / Save scan config (full-width row, at the end) ---
+        # --- Harmonic scan ---
+        self.harmonic_group = QGroupBox("Harmonic Scan")
+        apply_style(self.harmonic_group, S.GROUP_CHECKABLE)
+        self.harmonic_group.setCheckable(True)
+        self.harmonic_group.setChecked(False)
+        harmonic_layout = QVBoxLayout(self.harmonic_group)
+        harmonic_layout.setContentsMargins(0, 0, 0, 0)
+        harmonic_layout.setSpacing(3)
+
+        duty_row = QHBoxLayout()
+        duty_row.addWidget(QLabel("Laser duty:"))
+        self.laser_duty_spin = QDoubleSpinBox()
+        self.laser_duty_spin.setRange(0.0, 1.0)
+        self.laser_duty_spin.setSingleStep(0.01)
+        self.laser_duty_spin.setDecimals(3)
+        self.laser_duty_spin.setValue(DEFAULT_LASER_DUTY)
+        # self.laser_duty_spin.setToolTip(
+        #     "Fraction of the line period the laser is on — used by the "
+        #     "harmonic correction"
+        # )
+        duty_row.addWidget(self.laser_duty_spin)
+        duty_row.addStretch()
+        harmonic_layout.addLayout(duty_row)
+
+        delay_row = QHBoxLayout()
+        for label, attr, _tip in (
+            (
+                "Line markers -- start:",
+                "line_start_delay_spin",
+                "Shift the start edge of each reconstructed line "
+                "(fraction of a line duration)",
+            ),
+            (
+                "stop:",
+                "line_stop_delay_spin",
+                "Shift the stop edge of each reconstructed line "
+                "(fraction of a line duration)",
+            ),
+        ):
+            delay_row.addWidget(QLabel(label))
+            spin = QDoubleSpinBox()
+            spin.setRange(-1, 1)
+            spin.setSingleStep(0.001)
+            spin.setDecimals(3)
+            spin.setValue(0.0)
+            # spin.setToolTip(tip)
+            delay_row.addWidget(spin)
+            setattr(self, attr, spin)
+
+        delay_row.addStretch()
+        harmonic_layout.addLayout(delay_row)
+        main_layout.addWidget(self.harmonic_group)
+
         self.load_config_btn = QPushButton("Load Config")
         self.load_config_btn.setToolTip(
             "Load scan parameters from a JSON file"
@@ -443,15 +500,10 @@ class PtuPanel(QWidget):
         self.log_text.setTextCursor(cursor)
         self._log_buffer = []
 
-    # keep a single-call shortcut for one-liner messages
     def _log(self, text: str):
         self._log_start()
         self._log_line(text)
         self._log_commit()
-
-    # ------------------------------------------------------------------ #
-    # Slots                                                                #
-    # ------------------------------------------------------------------ #
 
     def _select_ptu_file(self):
         filepath_str, _ = QFileDialog.getOpenFileName(
@@ -526,9 +578,6 @@ class PtuPanel(QWidget):
             )
             self.header_info.setPlainText(summary)
 
-            # Apply the demo scan params (marked 'user'), via the same path as
-            # Load Config. The params' ptu_filename is ignored here — the file
-            # was already resolved/loaded above by load_demo().
             self._apply_config(params, source=provenance.USER)
 
             # File-derived values override the config for tcspc bins + rep. rate.
@@ -681,8 +730,6 @@ class PtuPanel(QWidget):
         dlg.setWindowTitle("Bidirectional Shift Estimation")
         dlg.resize(420, 300)
         layout = QVBoxLayout(dlg)
-        # Compact, dark-themed figure that fits the dialog (smaller fonts,
-        # thinner lines, tight_layout so the axes/labels aren't clipped).
         fig = Figure(figsize=(4.0, 2.6), dpi=100, facecolor=MPL.FIG_BG)
         canvas = FigureCanvas(fig)
         layout.addWidget(canvas)
@@ -731,27 +778,40 @@ class PtuPanel(QWidget):
             return None
         return self.current_config_dict()
 
-    def current_config_dict(self) -> dict:
-        """The panel's current fields as a core-schema config dict.
+    def current_settings(self) -> ScanSettings:
+        """Read every scan widget — the panel's single source of truth.
 
-        Used both by Save Config and by other tabs pulling the live settings
-        through ``FlopaState.file_config()``.
+        The JSON config, the tttrkit ScanConfig and the dataset attribute are
+        all derived from this, so a new parameter is wired up here once.
         """
-        return build_scan_config_dict(
+        return ScanSettings(
             frames=self.frames_spin.value(),
             lines=self.lines_spin.value(),
             pixels=self.pixels_spin.value(),
-            sequences=self.sequences_spin.value(),
-            accumulations=[s.value() for s in self.accu_spinboxes] or [1],
+            accumulations=tuple(s.value() for s in self.accu_spinboxes)
+            or (1,),
             max_detector=self.max_detector_spin.value(),
-            tcspc_bins=self.tcspc_bins_spin.value(),
             bidirectional=self.bidir_group.isChecked(),
             bidirectional_phase_shift=self.bidir_phase_spin.value(),
-            factor=_fmt_factor(self.state.calib_factor),
+            harmonic_scan=self.harmonic_group.isChecked(),
+            laser_duty=self.laser_duty_spin.value(),
+            line_start_marker_delay=self.line_start_delay_spin.value(),
+            line_stop_marker_delay=self.line_stop_delay_spin.value(),
+            tcspc_bins=self.tcspc_bins_spin.value(),
+            calib_factor=_fmt_factor(self.state.calib_factor),
             ptu_filename=(
                 self.ptu_filepath.name if self.ptu_filepath else None
             ),
+            sources=dict(self._param_source),
         )
+
+    def current_config_dict(self) -> dict:
+        """The panel's current fields as a core-schema config dict.
+
+        Used by Save Config, by other tabs pulling the live settings through
+        ``FlopaState.file_config()``, and stored on the reconstructed dataset.
+        """
+        return self.current_settings().to_json_dict()
 
     def _on_save_config_json(self):
         """Read the UI values, delegate serialisation to core, write the file."""
@@ -774,8 +834,6 @@ class PtuPanel(QWidget):
         """
         scan = cfg.get("scan", {})
         cal = cfg.get("calibration", {})
-        # Guard so the programmatic setValue()s don't mark fields as user-edited
-        # mid-apply; provenance is set explicitly (below) for applied fields.
         self._autofill = True
         try:
             spins = {
@@ -792,21 +850,24 @@ class PtuPanel(QWidget):
                     spin.setValue(int(scan[key]))
                     applied.append(key)
 
-            # Rebuild accumulation spinboxes for the (new) sequence count, then fill
             self._update_accumulation_widgets()
             for i, acc in enumerate(scan.get("accumulations", [])):
                 if i < len(self.accu_spinboxes):
                     self.accu_spinboxes[i].setValue(int(acc))
 
             self.bidir_group.setChecked(bool(scan.get("bidirectional", False)))
-            if "bidirectional_phase_shift" in scan:
-                self.bidir_phase_spin.setValue(
-                    float(scan["bidirectional_phase_shift"])
-                )
-            # A legacy `f_rep_mhz` is ignored on purpose: the repetition rate
-            # comes from the file header, never from a config.
-            # No widget for the factor here — it is handed to the Phasor tab
-            # (via the shared state) once reconstruction finishes.
+            self.harmonic_group.setChecked(
+                bool(scan.get("harmonic_scan", False))
+            )
+            float_spins = {
+                "bidirectional_phase_shift": self.bidir_phase_spin,
+                "laser_duty": self.laser_duty_spin,
+                "line_start_marker_delay": self.line_start_delay_spin,
+                "line_stop_marker_delay": self.line_stop_delay_spin,
+            }
+            for key, spin in float_spins.items():
+                if key in scan:
+                    spin.setValue(float(scan[key]))
             if cal.get("factor"):
                 self._cfg_calib_factor = complex(cal["factor"])
 
@@ -831,19 +892,7 @@ class PtuPanel(QWidget):
         self._log(f"Loaded config: {Path(path).name}")
 
     def _build_scan_config(self) -> ScanConfig:
-        accumulations = tuple(s.value() for s in self.accu_spinboxes) or (1,)
-        return ScanConfig(
-            lines=self.lines_spin.value(),
-            pixels=self.pixels_spin.value(),
-            frames=self.frames_spin.value(),
-            line_accumulations=accumulations,
-            bidirectional=self.bidir_group.isChecked(),
-            bidirectional_phase_shift=self.bidir_phase_spin.value(),
-            max_detector=self.max_detector_spin.value(),
-            frame_start_marker_channel=4,
-            line_start_marker_channel=1,
-            line_stop_marker_channel=2,
-        )
+        return self.current_settings().to_scan_config()
 
     def _run_reconstruction(self):
         if not self.ptu_data:
@@ -858,13 +907,13 @@ class PtuPanel(QWidget):
         self._log("Starting reconstruction...")
         QApplication.processEvents()
 
-        scan_config = self._build_scan_config()
+        scan_settings = self.current_settings()
+        scan_config = scan_settings.to_scan_config()
         outputs = self._get_outputs()
         tcspc_override = self.tcspc_bins_spin.value()
         chunk_size = self.chunk_size_spin.value()
         ptu_data = self.ptu_data
         logger = ProgressLogger(mode="collect")
-        # Emitting the signal is thread-safe; the slot runs on the main thread.
         emit_progress = self.reconstruction_progress.emit
 
         def _run():
@@ -880,7 +929,7 @@ class PtuPanel(QWidget):
 
         worker = Worker(_run)
         worker.signals.result.connect(
-            lambda ds: self._on_reconstruction_result(ds, scan_config)
+            lambda ds: self._on_reconstruction_result(ds, scan_settings)
         )
         worker.signals.error.connect(self._on_reconstruction_error)
         worker.signals.finished.connect(self._reconstruction_cleanup)
@@ -897,17 +946,15 @@ class PtuPanel(QWidget):
             self.recon_progress.setValue(done)
             self.recon_progress.setFormat(f"chunk {done}/{total}")
         else:
-            # Unknown record count → indeterminate "busy" bar.
             self.recon_progress.setRange(0, 0)
             self.recon_progress.setFormat(f"chunk {done}")
 
     @Slot(object)
-    def _on_reconstruction_result(self, ds, scan_config):
+    def _on_reconstruction_result(self, ds, scan_settings: ScanSettings):
         constants = self.ptu_data["constants"].copy() if self.ptu_data else {}
         constants["tcspc_bins"] = self.tcspc_bins_spin.value()
         ds.attrs["instrument_params"] = constants
-        if scan_config is not None:
-            ds.attrs["scan_config"] = scan_config.to_dict()
+        ds.attrs["scan_config"] = scan_settings.to_json_dict()["scan"]
         if self.ptu_filepath:
             ds.attrs["source_filename"] = self.ptu_filepath.name
 
