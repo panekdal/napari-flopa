@@ -61,7 +61,7 @@ except ImportError:
         FigureCanvasQTAgg as FigureCanvas,
     )
 
-from tttrkit.ptuio.utils import shift_decay
+from tttrkit.analysis.decay import shift_decay
 
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
