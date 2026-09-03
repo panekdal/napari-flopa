@@ -45,6 +45,43 @@ def bin_step_for_window(window_s: float) -> float:
     return _BIN_STEPS[-1][1]
 
 
+def range_statistics(dataset, start: float, stop: float) -> dict:
+    """Return marker counts and detector rates for the half-open range."""
+    photon_count = dataset["photon_count"]
+    times = photon_count.coords["time"].values
+    in_range = (times >= start) & (times < stop)
+    counts = photon_count.values[in_range]
+    totals = (
+        counts.sum(axis=0)
+        if counts.size
+        else [0] * photon_count.sizes["channel"]
+    )
+
+    return {
+        "duration": stop - start,
+        "markers": {
+            name: int(
+                (
+                    (dataset[var].values >= start)
+                    & (dataset[var].values < stop)
+                ).sum()
+            )
+            for name, var in (
+                ("line_start", "line_start_times"),
+                ("line_stop", "line_stop_times"),
+                ("frame_start", "frame_start_times"),
+            )
+            if var in dataset.data_vars
+        },
+        "channels": [
+            (int(channel), float(total) / (stop - start))
+            for channel, total in zip(
+                photon_count.coords["channel"].values, totals, strict=True
+            )
+        ],
+    }
+
+
 class TracePanel(QWidget):
     """Trace tab — intensity vs time, with marker overlays."""
 
@@ -169,6 +206,12 @@ class TracePanel(QWidget):
         sel_row.addStretch()
         root.addLayout(sel_row)
 
+        self._range_info = QLabel()
+        self._range_info.setStyleSheet(S.HINT)
+        self._range_info.setWordWrap(True)
+        self._range_info.setVisible(False)
+        root.addWidget(self._range_info)
+
         self._status = StatusLabel("Load a PTU file in the File tab.")
         root.addWidget(self._status)
 
@@ -262,6 +305,8 @@ class TracePanel(QWidget):
             self._stop_spin.value(),
         )
         self._plot.clear_selection()
+        self._range_info.clear()
+        self._range_info.setVisible(False)
         self._rebuild_channel_checks(dataset)
         self._redraw()
         self._mark_fresh()
@@ -335,9 +380,34 @@ class TracePanel(QWidget):
         """A drag on the plot becomes the next time window."""
         self._start_spin.setValue(float(start))
         self._stop_spin.setValue(float(stop))
+        self._show_range_statistics(float(start), float(stop))
         self._status.info("Range selected — click Apply to reconstruct it.")
+
+    def _show_range_statistics(self, start: float, stop: float):
+        stats = range_statistics(self._result, start, stop)
+        markers = stats["markers"]
+        marker_text = " | ".join(
+            f"{label}: {markers.get(name, 0):,}"
+            for name, label in (
+                ("line_start", "Line starts"),
+                ("line_stop", "Line stops"),
+                ("frame_start", "Frame starts"),
+            )
+        )
+        rates = " | ".join(
+            f"D{channel}: {rate:,.2f} cps"
+            for channel, rate in stats["channels"]
+        )
+        self._range_info.setText(
+            f"Selected range {start * 1_000:.4f}–{stop * 1_000:.4f} ms "
+            f"({stats['duration'] * 1_000:.4f} ms): "
+            f"{marker_text}<br>{rates}"
+        )
+        self._range_info.setVisible(True)
 
     @Slot()
     def _on_selection_cleared(self):
         """Clicking without dragging drops the range — and its message."""
+        self._range_info.clear()
+        self._range_info.setVisible(False)
         self._status.info(self._resting_status)
