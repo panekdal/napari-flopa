@@ -476,7 +476,7 @@ class DecayPanel(QWidget):
             return []
         try:
             da = ds["tcspc_histogram"]
-            # Expected dims: (frame, channel, tcspc_channel)
+            # Expected dims: ('frame', 'sequence', 'channel', 'tcspc_time')
 
             agg_frames = self._agg_frames.isChecked()
             agg_seqs = self._agg_seqs.isChecked()
@@ -489,13 +489,9 @@ class DecayPanel(QWidget):
             if agg_chans and "channel" in da.dims:
                 da = da.sum("channel")
 
-            time_dim = "tcspc_channel"
+            time_dim = "tcspc_time"
             free_dims = [d for d in da.dims if d != time_dim]
-
-            ip = ds.attrs.get("instrument_params", {})
-            res_ns = float(ip.get("tcspc_resolution_ns", 1.0))
-            n_bins = da.sizes[time_dim]
-            time_ns = np.arange(n_bins) * res_ns
+            time_ns = da.tcspc_time.values * 1e9
 
             _short = {"frame": "F", "sequence": "S", "channel": "D"}
 
