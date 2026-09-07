@@ -89,14 +89,7 @@ class ScanSettings:
 
     @property
     def effective_marker_delays(self) -> tuple[float, float]:
-        """Line start/stop delays as applied.
-
-        tttrkit shifts the line edges by these whether or not ``harmonic_scan``
-        is set, so an unticked harmonic mode must send zeros rather than
-        whatever was last typed.
-        """
-        if not self.harmonic_scan:
-            return 0.0, 0.0
+        """Line start/stop delays as applied — independent of scan mode."""
         return self.line_start_marker_delay, self.line_stop_marker_delay
 
     # ------------------------------------------------------------------ #

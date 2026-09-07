@@ -364,6 +364,36 @@ class PtuPanel(QWidget):
         accu_row.addWidget(self.accu_scroll)
         main_layout.addLayout(accu_row)
 
+        # --- Line start/stop marker delays (always enabled, independent of
+        # bidirectional/harmonic scan status) ---
+        delay_row = QHBoxLayout()
+        for label, attr, _tip in (
+            (
+                "Line markers -- start:",
+                "line_start_delay_spin",
+                "Shift the start edge of each reconstructed line "
+                "(fraction of a line duration)",
+            ),
+            (
+                "stop:",
+                "line_stop_delay_spin",
+                "Shift the stop edge of each reconstructed line "
+                "(fraction of a line duration)",
+            ),
+        ):
+            delay_row.addWidget(QLabel(label))
+            spin = QDoubleSpinBox()
+            spin.setRange(-1, 1)
+            spin.setSingleStep(0.001)
+            spin.setDecimals(3)
+            spin.setValue(0.0)
+            # spin.setToolTip(tip)
+            delay_row.addWidget(spin)
+            setattr(self, attr, spin)
+
+        delay_row.addStretch()
+        main_layout.addLayout(delay_row)
+
         # --- Bidirectional (nested, checkable subsection) ---
         # GROUP_NESTED sets no background-color, so the box is transparent and
         # inherits the Scan Configuration tint — its content area matches the
@@ -427,34 +457,6 @@ class PtuPanel(QWidget):
         duty_row.addWidget(self.laser_duty_spin)
         duty_row.addStretch()
         harmonic_layout.addLayout(duty_row)
-
-        delay_row = QHBoxLayout()
-        for label, attr, _tip in (
-            (
-                "Line markers -- start:",
-                "line_start_delay_spin",
-                "Shift the start edge of each reconstructed line "
-                "(fraction of a line duration)",
-            ),
-            (
-                "stop:",
-                "line_stop_delay_spin",
-                "Shift the stop edge of each reconstructed line "
-                "(fraction of a line duration)",
-            ),
-        ):
-            delay_row.addWidget(QLabel(label))
-            spin = QDoubleSpinBox()
-            spin.setRange(-1, 1)
-            spin.setSingleStep(0.001)
-            spin.setDecimals(3)
-            spin.setValue(0.0)
-            # spin.setToolTip(tip)
-            delay_row.addWidget(spin)
-            setattr(self, attr, spin)
-
-        delay_row.addStretch()
-        harmonic_layout.addLayout(delay_row)
         main_layout.addWidget(self.harmonic_group)
 
         self.load_config_btn = QPushButton("Load Config")
