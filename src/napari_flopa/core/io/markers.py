@@ -21,6 +21,7 @@ def get_markers(reader: TTTRReader, chunk_limit: int = 0) -> dict:
     all_markers = []
     wrap = read_tag(reader.header.tags, "wrap")
     corrector = T3OverflowCorrector(wraparound=wrap)
+    reader.reset()
 
     for i, chunk in enumerate(reader.iter_chunks(chunk_size=1_000_000)):
         if chunk_limit > 0 and i >= chunk_limit:

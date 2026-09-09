@@ -28,7 +28,10 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 from tttrkit.ptuio.reconstructor import ScanConfig
-from tttrkit.ptuio.utils import estimate_bidirectional_shift
+from tttrkit.ptuio.utils import (
+    estimate_bidirectional_prealign,
+    estimate_bidirectional_shift,
+)
 
 from napari_flopa.core import provenance
 from napari_flopa.core.demo import load_demo
@@ -387,6 +390,7 @@ class PtuPanel(QWidget):
             spin.setSingleStep(0.001)
             spin.setDecimals(3)
             spin.setValue(0.0)
+            spin.setFixedWidth(50)
             # spin.setToolTip(tip)
             delay_row.addWidget(spin)
             setattr(self, attr, spin)
@@ -411,11 +415,20 @@ class PtuPanel(QWidget):
         self.bidir_phase_spin.setSingleStep(0.0001)
         self.bidir_phase_spin.setDecimals(5)
         self.bidir_phase_spin.setValue(0.0)
-        # self.bidir_phase_spin.setMinimumWidth(70)
+        self.bidir_phase_spin.setFixedWidth(50)
         bidir_layout.addWidget(self.bidir_phase_spin, 1)
         # bidir_layout.addStretch()
 
         # Compact Est./Plot buttons, matched to the same small height.
+        self.prealign_btn = QPushButton("Pre-align")
+        self.prealign_btn.setToolTip(
+            "Quickly estimate a coarse starting guess for the phase shift"
+        )
+        self.prealign_btn.setFixedHeight(22)
+        self.prealign_btn.setStyleSheet(S.BTN_SMALL)
+        self.prealign_btn.clicked.connect(self._on_prealign_shift)
+        bidir_layout.addWidget(self.prealign_btn)
+
         self.estimate_btn = QPushButton("Estimate")
         self.estimate_btn.setToolTip("Estimate bidirectional phase shift")
         self.estimate_btn.setFixedHeight(22)
@@ -676,6 +689,47 @@ class PtuPanel(QWidget):
             self.accu_spinboxes.append(spin)
 
         self.accu_container_layout.addStretch()
+
+    def _on_prealign_shift(self):
+        if not self.ptu_data:
+            QMessageBox.warning(
+                self, "No File", "Please load a PTU file first."
+            )
+            return
+        self.prealign_btn.setText("Pre-aligning...")
+        self._log_start()
+        self._log_line("Estimating coarse bidirectional pre-alignment...")
+        QApplication.processEvents()
+
+        try:
+            accumulations = tuple(s.value() for s in self.accu_spinboxes) or (
+                1,
+            )
+            config = ScanConfig(
+                lines=self.lines_spin.value(),
+                pixels=self.pixels_spin.value(),
+                bidirectional=True,
+                bidirectional_phase_shift=self.bidir_phase_spin.value(),
+                line_accumulations=accumulations,
+                max_detector=self.max_detector_spin.value(),
+                frame_start_marker_channel=4,
+                line_start_marker_channel=1,
+                line_stop_marker_channel=2,
+            )
+            ds = estimate_bidirectional_prealign(
+                reader=self.ptu_data["reader"],
+                config=config,
+                wrap=self.ptu_data["constants"]["wrap"],
+                verbose=False,
+            )
+            phase_shift = float(ds["phase_shift"].values)
+            self.bidir_phase_spin.setValue(phase_shift)
+            self._log_line(f"Pre-align phase shift: {phase_shift:.5f}")
+        except Exception as e:
+            self._log_line(f"Error: {e}\n{traceback.format_exc()}")
+        finally:
+            self._log_commit()
+            self.prealign_btn.setText("Pre-align")
 
     def _on_estimate_shift(self):
         if not self.ptu_data:

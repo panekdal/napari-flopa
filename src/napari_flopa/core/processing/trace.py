@@ -70,6 +70,7 @@ def reconstruct_trace(
     # rather than the whole file.
     stop_nsync = stop_time * sync_rate
 
+    reader.reset()
     for chunk_num, chunk in enumerate(
         reader.iter_chunks(chunk_size=chunk_size), start=1
     ):

@@ -72,6 +72,7 @@ def reconstruct_ptu_to_dataset(
     # ceil division; 0 if the header did not report the record count
     total_chunks = -(-total_records // chunk_size) if total_records else 0
 
+    reader.reset()
     for chunk_num, chunk in enumerate(
         reader.iter_chunks(chunk_size=chunk_size), start=1
     ):
